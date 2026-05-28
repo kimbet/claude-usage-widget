@@ -57,6 +57,7 @@ const THROUGHPUT_WINDOW_MS = 15 * 60_000
 // Arnold uses Opus 4.7 1M — see system prompt. If you switch models,
 // extend this map.
 const CONTEXT_LIMITS = {
+  'claude-opus-4-8': 1_000_000,
   'claude-opus-4-7': 1_000_000,
   'claude-opus-4-6': 200_000,
   'claude-sonnet-4-6': 1_000_000,
@@ -65,8 +66,12 @@ const CONTEXT_LIMITS = {
 }
 function contextLimitFor(model) {
   if (!model) return 200_000
-  // Strip vendor suffixes like "[1m]" or date-stamps before lookup
-  const base = model.replace(/[[\-]\d.*$/, '').replace(/-\d{8}$/, '')
+  // Strip vendor suffixes like "[1m]" or trailing "-YYYYMMDD" date-stamps
+  // before lookup, WITHOUT eating the version number. The model id is
+  // e.g. "claude-opus-4-8", optionally "...-20251001" or "...[1m]".
+  const base = model
+    .replace(/\[.*$/, '')        // drop "[1m]" and anything after
+    .replace(/-\d{8}$/, '')      // drop a trailing date-stamp
   return CONTEXT_LIMITS[base] ?? CONTEXT_LIMITS[model] ?? 200_000
 }
 
