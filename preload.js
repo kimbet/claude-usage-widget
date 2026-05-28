@@ -6,11 +6,14 @@
 
 const { contextBridge, ipcRenderer } = require('electron')
 const parser = require('./src/parser.js')
+const quota = require('./src/quota.js')
 
 contextBridge.exposeInMainWorld('widget', {
   // Returns: { sessions: SessionView[], totals: {...}, scannedAt }
   scan: () => parser.scan(),
   // Returns: { series: { hoursBack, bucketMin, buckets[] }, scannedAt }
   scanSeries: (hours, bucketMin) => parser.scanSeries(hours, bucketMin),
+  // Returns: { fiveHour, sevenDay, ... } OR { error, message }
+  fetchQuota: () => quota.fetchQuota(),
   openContextMenu: () => ipcRenderer.send('context-menu'),
 })

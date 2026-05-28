@@ -146,3 +146,63 @@ async function refreshChart() {
 }
 refreshChart()
 setInterval(refreshChart, 10_000)
+
+// Subscription quota — Anthropic OAuth /api/oauth/usage endpoint.
+// Updates much more slowly than session data; poll every 60 s.
+const $quota = document.getElementById('quota')
+
+function fmtResetIn(ms) {
+  if (ms == null) return ''
+  if (ms <= 0) return 'now'
+  if (ms < 60_000) return Math.floor(ms / 1000) + 's'
+  if (ms < 3_600_000) return Math.floor(ms / 60_000) + 'm'
+  const h = Math.floor(ms / 3_600_000)
+  const m = Math.floor((ms % 3_600_000) / 60_000)
+  return m === 0 ? `${h}h` : `${h}h${m}m`
+}
+
+function fmtResetAt(t) {
+  if (!t) return ''
+  const d = new Date(t)
+  // Today → HH:MM, otherwise DD.MM
+  const today = new Date(); today.setHours(0,0,0,0)
+  const isToday = d.getTime() < today.getTime() + 86_400_000
+  return isToday
+    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString([], { day: '2-digit', month: '2-digit' })
+}
+
+function severityPct(pct) {
+  if (pct >= 90) return 'crit'
+  if (pct >= 75) return 'warn'
+  return ''
+}
+
+function renderQuotaRow(label, period) {
+  if (!period) return ''
+  const pct = period.utilization || 0
+  const sev = severityPct(pct)
+  return `
+    <div class="qrow ${sev}">
+      <span class="qlbl">${label}</span>
+      <span class="qbar"><span style="width:${Math.min(100, pct)}%"></span></span>
+      <span class="qpct">${pct}%</span>
+      <span class="qreset" title="${period.resetsAt ? new Date(period.resetsAt).toLocaleString() : ''}">${fmtResetIn(period.resetsInMs)}</span>
+    </div>
+  `
+}
+
+async function refreshQuota() {
+  let q
+  try { q = await window.widget.fetchQuota() } catch (e) {
+    $quota.innerHTML = `<div class="err">quota: ${escape(e.message)}</div>`
+    return
+  }
+  if (q.error) {
+    $quota.innerHTML = `<div class="err">${escape(q.message || q.error)}</div>`
+    return
+  }
+  $quota.innerHTML = renderQuotaRow('5h', q.fiveHour) + renderQuotaRow('7d', q.sevenDay)
+}
+refreshQuota()
+setInterval(refreshQuota, 60_000)

@@ -22,9 +22,9 @@ let win = null
 function createWindow() {
   const state = loadState()
   const primary = screen.getPrimaryDisplay().workArea
-  // Default: top-right corner, ~360x290, can grow with content
+  // Default: top-right corner, ~360x340, can grow with content
   const width = state.width ?? 360
-  const height = state.height ?? 290
+  const height = state.height ?? 340
   const x = state.x ?? (primary.x + primary.width - width - 16)
   const y = state.y ?? (primary.y + 16)
 

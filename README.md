@@ -33,6 +33,15 @@ Code session on the machine.
   (input + output + cache_creation, **not** cache_read), because
   cache_read replays of the conversation dominate raw counts by
   10–100× and make every session look like 600k tok/min.
+- **Subscription quota** — live 5-hour and 7-day window utilisation
+  with reset countdown, fetched once a minute from Anthropic's
+  `/api/oauth/usage` endpoint (same source as Claude Code's `/usage`
+  slash command). Auth via the OAuth token in
+  `~/.claude/.credentials.json`; nothing else leaves the machine.
+- **4-hour throughput sparkline** — tokens-per-minute in 5-min
+  buckets across every project. Y-axis capped at the 95th-percentile
+  rate so a single session-start cache_creation spike doesn't
+  flatten the rest of the chart.
 - **Today totals** — same "new work" definition, summed across
   every project's JSONL, from local-time midnight.
 
@@ -119,8 +128,13 @@ folder layout differs on those OSes.
   transcript. Each `type: "assistant"` line carries `message.usage`
   with `input_tokens`, `output_tokens`, `cache_creation_input_tokens`,
   `cache_read_input_tokens`, and `message.model`.
+- `~/.claude/.credentials.json` — OAuth access token, used solely as
+  `Authorization: Bearer …` against `https://api.anthropic.com/api/oauth/usage`
+  (same endpoint Claude Code's own `/usage` command hits). The
+  response carries the 5-hour and 7-day window utilisation.
 
-Nothing leaves the machine. No API calls, no telemetry.
+Apart from the once-per-minute call to `api.anthropic.com`, nothing
+leaves the machine. No telemetry.
 
 ## Architecture
 
@@ -133,6 +147,9 @@ Nothing leaves the machine. No API calls, no telemetry.
 - `src/parser.js` — all data work: lists active sessions, reads
   each session's JSONL tail-first, computes context size + 15-min
   rate. Pure Node, no Electron dependency — usable from any script.
+- `src/quota.js` — Anthropic OAuth usage endpoint client. Reads the
+  CC OAuth token, calls `/api/oauth/usage`, flattens the response
+  into `fiveHour` / `sevenDay` / etc.
 - `src/renderer.js` — polls `window.widget.scan()` every 2 seconds
   and re-renders the DOM. No virtual DOM, no framework; the data
   volume is tiny.
