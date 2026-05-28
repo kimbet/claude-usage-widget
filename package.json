@@ -1,0 +1,14 @@
+{
+  "name": "claude-usage-widget",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Always-on-top widget for Windows showing live Claude Code session usage, context utilisation, and 15-minute token throughput.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --enable-logging"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0"
+  }
+}

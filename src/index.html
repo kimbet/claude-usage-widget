@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Claude Usage</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- The header is the drag handle. CSS `-webkit-app-region: drag`
+       makes the whole bar grab-and-move; the close button overrides
+       it back to a clickable area so dragging doesn't swallow it. -->
+  <header id="drag">
+    <span class="title">Claude Code</span>
+    <span class="scanned" id="scanned">—</span>
+    <button class="iconbtn" id="menu" title="Menu">⋯</button>
+  </header>
+
+  <main id="sessions">
+    <div class="empty">scanning…</div>
+  </main>
+
+  <footer id="totals">Today: — · — msg</footer>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
