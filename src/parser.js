@@ -301,7 +301,13 @@ function timeSeries(hoursBack = 4, bucketMin = 5) {
 }
 
 function scan() {
-  const sessions = listActiveSessions().map(statsForSession)
+  // Drop freshly-started sessions that have no transcript yet: their
+  // <pid>.json registry entry exists before the first assistant reply,
+  // so model is unknown and contextLimitFor() defaults to 200k — they'd
+  // otherwise render as a bogus "0 / 200k (0%)" row.
+  const sessions = listActiveSessions()
+    .map(statsForSession)
+    .filter(s => s.hasUsageData)
   const totals = todayTotals()
   return { sessions, totals, scannedAt: Date.now() }
 }
