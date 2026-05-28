@@ -19,6 +19,14 @@
     <div class="empty">scanning…</div>
   </main>
 
+  <section id="chart-wrap" title="Throughput — new work per minute, last 4h in 5-min buckets">
+    <div class="chart-head">
+      <span class="lbl">last 4h</span>
+      <span class="peak" id="chart-peak">peak —</span>
+    </div>
+    <svg id="chart" viewBox="0 0 200 40" preserveAspectRatio="none"></svg>
+  </section>
+
   <footer id="totals">Today: — · — msg</footer>
 
   <script src="renderer.js"></script>

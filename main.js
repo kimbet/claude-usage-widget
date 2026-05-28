@@ -22,9 +22,9 @@ let win = null
 function createWindow() {
   const state = loadState()
   const primary = screen.getPrimaryDisplay().workArea
-  // Default: top-right corner, ~360x220, can grow with content
+  // Default: top-right corner, ~360x290, can grow with content
   const width = state.width ?? 360
-  const height = state.height ?? 240
+  const height = state.height ?? 290
   const x = state.x ?? (primary.x + primary.width - width - 16)
   const y = state.y ?? (primary.y + 16)
 
@@ -43,6 +43,12 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      // The preload needs to require('./src/parser.js') — that's not
+      // possible inside the default Chromium sandbox. The renderer
+      // itself stays sandboxed and has zero Node access; only the
+      // preload bridge runs unsandboxed, which is the standard pattern
+      // for desktop tools that touch local files.
+      sandbox: false,
     },
   })
 

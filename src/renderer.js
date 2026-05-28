@@ -86,3 +86,63 @@ async function refresh() {
 
 refresh()
 setInterval(refresh, 2000)
+
+// Chart — separate cadence because the bucket data only mutates every
+// few minutes; polling it on the 2-second loop is wasted I/O.
+const SVG_NS = 'http://www.w3.org/2000/svg'
+const $chart = document.getElementById('chart')
+const $peak  = document.getElementById('chart-peak')
+
+function renderChart(series) {
+  const buckets = series.buckets
+  if (!buckets.length) return
+  const W = 200, H = 40
+  const n = buckets.length
+
+  // Cap the y-axis at the 95th-percentile rate. Without capping a
+  // single session-start cache_creation spike (200k+ tok/min) crushes
+  // the rest of the chart. We still draw spikes — they just clip at
+  // the top of the panel — but the visible scale stays informative.
+  const sorted = buckets.map(b => b.rate).sort((a, b) => a - b)
+  const p95 = sorted[Math.floor(sorted.length * 0.95)] || 0
+  const maxRate = Math.max(p95, ...sorted.slice(-3)) // include top 3 in case of all-zero
+  const yMax = Math.max(maxRate, 1)
+
+  $peak.textContent = `peak ${fmtTokens(Math.round(Math.max(...sorted)))} tok/min`
+
+  // x = bucket centre; first bucket at x=0, last bucket at x=W
+  const xOf = i => (n === 1) ? W : (i / (n - 1)) * W
+  const yOf = rate => H - Math.min(H, (rate / yMax) * H)
+
+  // Polyline path
+  let line = ''
+  for (let i = 0; i < n; i++) {
+    line += (i === 0 ? 'M' : 'L') + xOf(i).toFixed(2) + ',' + yOf(buckets[i].rate).toFixed(2)
+  }
+  // Filled area under the line, closed back at baseline
+  const area = line + `L${W},${H} L0,${H} Z`
+
+  $chart.innerHTML = `
+    <defs>
+      <linearGradient id="chart-grad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%"  stop-color="#60a5fa" />
+        <stop offset="100%" stop-color="#60a5fa" stop-opacity="0" />
+      </linearGradient>
+    </defs>
+    <line class="axis" x1="0" y1="${H}" x2="${W}" y2="${H}" />
+    <path  class="area" d="${area}" />
+    <path  class="line" d="${line}" />
+    <line  class="now"  x1="${W - 0.5}" y1="0" x2="${W - 0.5}" y2="${H}" />
+  `
+}
+
+async function refreshChart() {
+  try {
+    const snap = await window.widget.scanSeries(4, 5)
+    renderChart(snap.series)
+  } catch (e) {
+    // swallow — chart is non-critical
+  }
+}
+refreshChart()
+setInterval(refreshChart, 10_000)

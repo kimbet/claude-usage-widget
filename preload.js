@@ -8,7 +8,9 @@ const { contextBridge, ipcRenderer } = require('electron')
 const parser = require('./src/parser.js')
 
 contextBridge.exposeInMainWorld('widget', {
-  // Returns: { sessions: SessionView[], totals: { todayTokens, ... } }
+  // Returns: { sessions: SessionView[], totals: {...}, scannedAt }
   scan: () => parser.scan(),
+  // Returns: { series: { hoursBack, bucketMin, buckets[] }, scannedAt }
+  scanSeries: (hours, bucketMin) => parser.scanSeries(hours, bucketMin),
   openContextMenu: () => ipcRenderer.send('context-menu'),
 })

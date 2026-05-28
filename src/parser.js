@@ -241,10 +241,70 @@ function todayTotals() {
   return { tokens, messages }
 }
 
+// Tokens-per-minute in fixed-width buckets over the last `hoursBack`
+// hours, aggregated across every project's JSONL. Returns an array of
+// length ⌈hoursBack·60 / bucketMin⌉; index 0 is the oldest bucket,
+// index N-1 is the bucket containing "now". Each entry:
+//   { t0, t1, tokens, rate }
+// where rate = tokens / bucketMin (tokens-per-minute). Same "new work"
+// definition as the per-session rate.
+function timeSeries(hoursBack = 4, bucketMin = 5) {
+  const now = Date.now()
+  const since = now - hoursBack * 3_600_000
+  const bucketMs = bucketMin * 60_000
+  const n = Math.ceil((hoursBack * 60) / bucketMin)
+  const tokens = new Array(n).fill(0)
+
+  let projectDirs = []
+  try { projectDirs = fs.readdirSync(PROJECTS_DIR) } catch { /* nothing */ }
+  for (const d of projectDirs) {
+    const dirPath = path.join(PROJECTS_DIR, d)
+    let files = []
+    try { files = fs.readdirSync(dirPath) } catch { continue }
+    for (const f of files) {
+      if (!f.endsWith('.jsonl')) continue
+      const fp = path.join(dirPath, f)
+      let stat
+      try { stat = fs.statSync(fp) } catch { continue }
+      // If the file hasn't been touched in our window AND its mtime is
+      // before `since`, it can't contain in-range events. (Older files
+      // get skipped entirely — mtime only goes UP as events are appended.)
+      if (stat.mtimeMs < since) continue
+      readJsonlTail(fp, (ev) => {
+        if (ev.type !== 'assistant') return false
+        const ts = ev.timestamp ? Date.parse(ev.timestamp) : NaN
+        if (!Number.isFinite(ts)) return false
+        if (ts < since) return true  // walked past window — stop tail
+        const u = ev.message?.usage
+        if (!u) return false
+        const idx = Math.min(n - 1, Math.max(0, Math.floor((ts - since) / bucketMs)))
+        tokens[idx] += (u.input_tokens || 0)
+                     + (u.output_tokens || 0)
+                     + (u.cache_creation_input_tokens || 0)
+        return false
+      })
+    }
+  }
+
+  const buckets = tokens.map((tk, i) => ({
+    t0: since + i * bucketMs,
+    t1: since + (i + 1) * bucketMs,
+    tokens: tk,
+    rate: tk / bucketMin,
+  }))
+  return { hoursBack, bucketMin, buckets }
+}
+
 function scan() {
   const sessions = listActiveSessions().map(statsForSession)
   const totals = todayTotals()
   return { sessions, totals, scannedAt: Date.now() }
 }
 
-module.exports = { scan, statsForSession, listActiveSessions, todayTotals, contextLimitFor, mangleCwd }
+// Slower path for the chart — separated so the renderer can poll it
+// on its own cadence (much less often than scan()).
+function scanSeries(hoursBack = 4, bucketMin = 5) {
+  return { series: timeSeries(hoursBack, bucketMin), scannedAt: Date.now() }
+}
+
+module.exports = { scan, scanSeries, statsForSession, listActiveSessions, todayTotals, timeSeries, contextLimitFor, mangleCwd }

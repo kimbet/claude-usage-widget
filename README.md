@@ -39,6 +39,8 @@ Code session on the machine.
 ## Run
 
 ```sh
+git clone https://github.com/kimbet/claude-usage-widget.git
+cd claude-usage-widget
 npm install
 npm start
 ```
@@ -46,6 +48,55 @@ npm start
 Right-click the widget for a context menu (toggle always-on-top,
 reload, DevTools, quit). Drag the header to move; window position
 persists in `~/.claude-usage-widget.json`.
+
+## Autostart on Windows (optional)
+
+Run this PowerShell snippet from the repo root. It creates a desktop
+shortcut for manual launch and a Startup-folder shortcut that fires
+the widget at every Windows login — no CMD window, just the widget.
+
+```powershell
+$repo   = (Resolve-Path .).Path
+$target = "$repo\node_modules\electron\dist\electron.exe"
+$wsh    = New-Object -ComObject WScript.Shell
+
+foreach ($dst in @(
+    [Environment]::GetFolderPath('Desktop'),
+    "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
+)) {
+    $lnk = $wsh.CreateShortcut("$dst\Claude Usage Widget.lnk")
+    $lnk.TargetPath        = $target
+    $lnk.Arguments         = "."
+    $lnk.WorkingDirectory  = $repo
+    $lnk.IconLocation      = $target
+    $lnk.Save()
+}
+```
+
+To disable autostart later, delete
+`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Claude Usage Widget.lnk`.
+
+## Sharing with a friend
+
+The widget only reads local files under `~/.claude/`. It works on any
+machine that has Claude Code installed and Node.js 22+.
+
+For a friend on Windows:
+
+```sh
+git clone https://github.com/kimbet/claude-usage-widget.git
+cd claude-usage-widget
+npm install
+npm start
+```
+
+The widget shows their sessions, not yours — `~/.claude/` is per-user.
+For autostart, run the PowerShell snippet above from the repo root.
+
+On macOS/Linux the parser logic is the same; `npm start` works there
+too, though the path-mangling convention (see `mangleCwd` in
+`src/parser.js`) was verified on Windows only — adjust if Claude Code's
+folder layout differs on those OSes.
 
 ## Data sources (read-only)
 
