@@ -38,9 +38,20 @@ Code session on the machine.
 
 ## Run
 
+Easiest path on Windows — clone, then **double-click `start.bat`**.
+First run installs the dependencies (~30 s), every subsequent
+double-click just launches the widget (no console window, no `npm`
+command needed).
+
 ```sh
 git clone https://github.com/kimbet/claude-usage-widget.git
 cd claude-usage-widget
+start.bat
+```
+
+Equivalent for terminal users / macOS / Linux:
+
+```sh
 npm install
 npm start
 ```
@@ -86,9 +97,10 @@ For a friend on Windows:
 ```sh
 git clone https://github.com/kimbet/claude-usage-widget.git
 cd claude-usage-widget
-npm install
-npm start
 ```
+
+Then **double-click `start.bat`** — it installs deps on first run and
+starts the widget. No terminal knowledge required after the clone.
 
 The widget shows their sessions, not yours — `~/.claude/` is per-user.
 For autostart, run the PowerShell snippet above from the repo root.
