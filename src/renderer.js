@@ -192,17 +192,38 @@ function renderQuotaRow(label, period) {
   `
 }
 
+// Last successfully fetched quota. On a transient error (network blip,
+// token refresh in flight, rate limit) we keep showing this instead of
+// blanking the panel with an error — the numbers move slowly, so a
+// slightly stale value is far more useful than "quota: …".
+let lastQuota = null
+
+function renderQuota(q, stale) {
+  // When stale, dim the panel and append the age of the last good read
+  // so a frozen number is never mistaken for a live one.
+  const note = stale && q.fetchedAt
+    ? `<div class="qstale">stale · ${fmtAgo(Date.now() - q.fetchedAt)} ago</div>`
+    : ''
+  $quota.classList.toggle('stale', !!stale)
+  $quota.innerHTML = renderQuotaRow('5h', q.fiveHour) + renderQuotaRow('7d', q.sevenDay) + note
+}
+
 async function refreshQuota() {
   let q
   try { q = await window.widget.fetchQuota() } catch (e) {
+    if (lastQuota) { renderQuota(lastQuota, true); return }
+    $quota.classList.remove('stale')
     $quota.innerHTML = `<div class="err">quota: ${escape(e.message)}</div>`
     return
   }
   if (q.error) {
+    if (lastQuota) { renderQuota(lastQuota, true); return }
+    $quota.classList.remove('stale')
     $quota.innerHTML = `<div class="err">${escape(q.message || q.error)}</div>`
     return
   }
-  $quota.innerHTML = renderQuotaRow('5h', q.fiveHour) + renderQuotaRow('7d', q.sevenDay)
+  lastQuota = q
+  renderQuota(q, false)
 }
 refreshQuota()
 setInterval(refreshQuota, 60_000)
