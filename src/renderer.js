@@ -4,7 +4,6 @@
 // the snapshot is tiny (~N sessions × ~10 numbers) and parser.js does
 // the heavy lifting once per tick.
 
-const $sessions = document.getElementById('sessions')
 const $totals   = document.getElementById('totals')
 const $scanned  = document.getElementById('scanned')
 
@@ -26,36 +25,6 @@ function fmtAgo(ms) {
   return (ms / 3_600_000).toFixed(1) + 'h'
 }
 
-function severity(pct) {
-  if (pct >= 90) return 'crit'
-  if (pct >= 70) return 'warn'
-  return ''
-}
-
-function renderSession(s) {
-  const el = document.createElement('div')
-  const sev = severity(s.ctxPct)
-  el.className = ['session', s.status === 'busy' ? 'busy' : 'idle', sev].filter(Boolean).join(' ')
-
-  const statusLabel = s.status === 'busy'
-    ? 'busy'
-    : (s.idleMs > 1000 ? `idle ${fmtAgo(s.idleMs)}` : 'idle')
-
-  el.innerHTML = `
-    <div class="row1">
-      <span class="dot"></span>
-      <span class="name" title="${escape(s.cwd || '')}">${escape(s.name)}</span>
-      <span class="status">${statusLabel}</span>
-    </div>
-    <div class="bar"><span style="width: ${Math.min(100, s.ctxPct).toFixed(1)}%"></span></div>
-    <div class="row2">
-      <span class="ctx">${fmtTokens(s.ctxSize)} / ${fmtTokens(s.ctxLimit)} (${s.ctxPct.toFixed(0)}%)</span>
-      <span class="rate">${s.tokensPerMin > 0 ? fmtTokens(Math.round(s.tokensPerMin)) + ' tok/min' : '—'}</span>
-    </div>
-  `
-  return el
-}
-
 function escape(s) {
   return String(s).replace(/[&<>"']/g, c => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -65,23 +34,31 @@ function escape(s) {
 async function refresh() {
   let snap
   try { snap = await window.widget.scan() } catch (e) {
-    $sessions.innerHTML = `<div class="empty">scan error: ${escape(e.message)}</div>`
     return
   }
 
   $scanned.textContent = new Date(snap.scannedAt).toLocaleTimeString()
-
-  if (snap.sessions.length === 0) {
-    $sessions.innerHTML = '<div class="empty">no active sessions</div>'
-  } else {
-    $sessions.replaceChildren(...snap.sessions.map(renderSession))
-  }
 
   const t = snap.totals
   $totals.innerHTML = `
     <span>Today: ${fmtTokens(t.tokens)}</span>
     <span>${t.messages} msg</span>
   `
+  fitHeight()
+}
+
+// Window fits its content height: with the per-session context-window
+// list gone, a fixed window would leave dead space below the quota. Ask
+// main to size the window to the rendered content instead.
+let lastFitH = 0
+function fitHeight() {
+  requestAnimationFrame(() => {
+    const h = document.body.offsetHeight
+    if (h && Math.abs(h - lastFitH) > 2) {
+      lastFitH = h
+      window.widget.resizeContent(h)
+    }
+  })
 }
 
 refresh()
@@ -140,6 +117,7 @@ async function refreshChart() {
   try {
     const snap = await window.widget.scanSeries(4, 5)
     renderChart(snap.series)
+    fitHeight()
   } catch (e) {
     // swallow — chart is non-critical
   }
@@ -178,16 +156,39 @@ function severityPct(pct) {
   return ''
 }
 
+// Length of each rolling window, so we can show how far through the
+// current window we are by TIME — a second, thinner bar under the
+// utilization bar. Compare the two at a glance: if the usage bar is
+// ahead of the time bar you're burning faster than the clock; if it's
+// behind, you have headroom.
+const WINDOW_MS = { '5h': 5 * 3_600_000, '7d': 7 * 24 * 3_600_000 }
+
 function renderQuotaRow(label, period) {
   if (!period) return ''
   const pct = period.utilization || 0
   const sev = severityPct(pct)
+
+  const winMs = WINDOW_MS[label]
+  let timePct = null
+  if (winMs && period.resetsInMs != null) {
+    timePct = Math.max(0, Math.min(100, (1 - period.resetsInMs / winMs) * 100))
+  }
+  const timeBar = timePct == null ? '' : `
+      <div class="qtime" title="Zeit im ${label}-Fenster verstrichen">
+        <span></span>
+        <span class="qtrack"><span class="qtfill" style="width:${timePct.toFixed(1)}%"></span></span>
+        <span class="qtpct">${Math.round(timePct)}%</span>
+        <span class="qtlbl">Zeit</span>
+      </div>`
+
   return `
-    <div class="qrow ${sev}">
-      <span class="qlbl">${label}</span>
-      <span class="qbar"><span style="width:${Math.min(100, pct)}%"></span></span>
-      <span class="qpct">${pct}%</span>
-      <span class="qreset" title="${period.resetsAt ? new Date(period.resetsAt).toLocaleString() : ''}">${fmtResetIn(period.resetsInMs)}</span>
+    <div class="qgroup ${sev}">
+      <div class="qrow">
+        <span class="qlbl">${label}</span>
+        <span class="qbar"><span style="width:${Math.min(100, pct)}%"></span></span>
+        <span class="qpct">${pct}%</span>
+        <span class="qreset" title="${period.resetsAt ? new Date(period.resetsAt).toLocaleString() : ''}">${fmtResetIn(period.resetsInMs)}</span>
+      </div>${timeBar}
     </div>
   `
 }
@@ -229,6 +230,7 @@ async function refreshQuota() {
     return
   }
   $quota.innerHTML = all.accounts.map(a => renderAccountQuota(a.name, a.quota)).join('')
+  fitHeight()
 }
 refreshQuota()
 setInterval(refreshQuota, 60_000)

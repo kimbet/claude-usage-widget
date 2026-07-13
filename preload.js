@@ -18,4 +18,6 @@ contextBridge.exposeInMainWorld('widget', {
   // Multi-account: { accounts: [{ name, quota }], fetchedAt }
   fetchAllQuota: () => quota.fetchAllQuota(),
   openContextMenu: () => ipcRenderer.send('context-menu'),
+  // Fit the window height to the rendered content.
+  resizeContent: (h) => ipcRenderer.send('resize-content', h),
 })

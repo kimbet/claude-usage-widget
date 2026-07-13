@@ -85,5 +85,15 @@ function showContextMenu() {
 }
 ipcMain.on('context-menu', showContextMenu)
 
+// Fit window height to rendered content. Width and position stay as the
+// user placed them; only the height tracks the content so the panel has
+// no dead space below the quota (the tall session list is gone).
+ipcMain.on('resize-content', (e, h) => {
+  if (!win || win.isDestroyed()) return
+  const [w, curH] = win.getSize()
+  const target = Math.max(120, Math.min(900, Math.round(h)))
+  if (Math.abs(curH - target) > 1) win.setSize(w, target)
+})
+
 app.whenReady().then(createWindow)
 app.on('window-all-closed', () => app.quit())
