@@ -15,5 +15,7 @@ contextBridge.exposeInMainWorld('widget', {
   scanSeries: (hours, bucketMin) => parser.scanSeries(hours, bucketMin),
   // Returns: { fiveHour, sevenDay, ... } OR { error, message }
   fetchQuota: () => quota.fetchQuota(),
+  // Multi-account: { accounts: [{ name, quota }], fetchedAt }
+  fetchAllQuota: () => quota.fetchAllQuota(),
   openContextMenu: () => ipcRenderer.send('context-menu'),
 })

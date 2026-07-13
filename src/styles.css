@@ -167,9 +167,28 @@ body {
   font-size: 10px;
   font-style: italic;
 }
+/* Multi-account: one block per logged-in account, name label on top. */
+#quota .qacc { padding: 1px 0; }
+#quota .qacc + .qacc {
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  margin-top: 3px;
+  padding-top: 3px;
+}
+#quota .qname {
+  display: block;
+  color: #a78bfa;
+  font-weight: 700;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 1px;
+}
+#quota .qacc.err .qname { color: #f87171; }
+
 /* Stale: last good read is being shown because the latest fetch failed.
    Dim the rows and label them so the value reads as "frozen, not live". */
-#quota.stale .qrow { opacity: 0.45; }
+#quota.stale .qrow,
+#quota .qacc.stale .qrow { opacity: 0.45; }
 #quota .qstale {
   color: #9ca3af;
   font-size: 9px;

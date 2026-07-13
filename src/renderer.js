@@ -192,38 +192,43 @@ function renderQuotaRow(label, period) {
   `
 }
 
-// Last successfully fetched quota. On a transient error (network blip,
-// token refresh in flight, rate limit) we keep showing this instead of
-// blanking the panel with an error — the numbers move slowly, so a
-// slightly stale value is far more useful than "quota: …".
-let lastQuota = null
+// Per-account last-good cache. On a transient error (network blip, token
+// refresh in flight, rate limit) we keep showing THAT account's last good
+// numbers rather than blanking it — the numbers move slowly, so a slightly
+// stale value beats an error. Other accounts are unaffected.
+const lastGood = new Map()  // name -> quota result
 
-function renderQuota(q, stale) {
-  // When stale, dim the panel and append the age of the last good read
-  // so a frozen number is never mistaken for a live one.
-  const note = stale && q.fetchedAt
-    ? `<div class="qstale">stale · ${fmtAgo(Date.now() - q.fetchedAt)} ago</div>`
-    : ''
-  $quota.classList.toggle('stale', !!stale)
-  $quota.innerHTML = renderQuotaRow('5h', q.fiveHour) + renderQuotaRow('7d', q.sevenDay) + note
+function renderAccountQuota(name, q) {
+  let stale = false
+  if (!q || q.error) {
+    const prev = lastGood.get(name)
+    if (prev) { q = prev; stale = true }
+    else {
+      return `<div class="qacc err"><span class="qname">${escape(name)}</span>`
+        + `<div class="err">${escape((q && (q.message || q.error)) || 'no data')}</div></div>`
+    }
+  } else {
+    lastGood.set(name, q)
+  }
+  const staleTag = stale && q.fetchedAt
+    ? `<div class="qstale">stale · ${fmtAgo(Date.now() - q.fetchedAt)} ago</div>` : ''
+  return `<div class="qacc${stale ? ' stale' : ''}">`
+    + `<span class="qname">${escape(name)}</span>`
+    + renderQuotaRow('5h', q.fiveHour) + renderQuotaRow('7d', q.sevenDay)
+    + staleTag + `</div>`
 }
 
 async function refreshQuota() {
-  let q
-  try { q = await window.widget.fetchQuota() } catch (e) {
-    if (lastQuota) { renderQuota(lastQuota, true); return }
-    $quota.classList.remove('stale')
+  let all
+  try { all = await window.widget.fetchAllQuota() } catch (e) {
     $quota.innerHTML = `<div class="err">quota: ${escape(e.message)}</div>`
     return
   }
-  if (q.error) {
-    if (lastQuota) { renderQuota(lastQuota, true); return }
-    $quota.classList.remove('stale')
-    $quota.innerHTML = `<div class="err">${escape(q.message || q.error)}</div>`
+  if (!all.accounts || !all.accounts.length) {
+    $quota.innerHTML = `<div class="empty">no accounts</div>`
     return
   }
-  lastQuota = q
-  renderQuota(q, false)
+  $quota.innerHTML = all.accounts.map(a => renderAccountQuota(a.name, a.quota)).join('')
 }
 refreshQuota()
 setInterval(refreshQuota, 60_000)
