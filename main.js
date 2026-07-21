@@ -9,6 +9,15 @@ const fs = require('node:fs')
 const os = require('node:os')
 
 const STATE_PATH = path.join(os.homedir(), '.claude-usage-widget.json')
+const ICON_PATH = path.join(__dirname, 'assets', 'icon.ico')
+
+// Eigene Windows-Taskleisten-Identitaet: ohne das erbt die App die generische
+// "Electron"-Identitaet (Taskleiste zeigt Electron, Anheften heftet electron.exe
+// an -> startet leer neu). Mit einer eigenen AppUserModelID gruppiert Windows das
+// Fenster unter einer eigenen, anheftbaren Schaltflaeche (passend zur gleichnamigen
+// Verknuepfung im Startmenue). Muss VOR app.whenReady gesetzt werden.
+const APP_ID = 'com.arnoldruess.claude-usage-widget'
+if (process.platform === 'win32') app.setAppUserModelId(APP_ID)
 
 function loadState() {
   try { return JSON.parse(fs.readFileSync(STATE_PATH, 'utf8')) } catch { return {} }
@@ -30,6 +39,7 @@ function createWindow() {
 
   win = new BrowserWindow({
     width, height, x, y,
+    icon: ICON_PATH,
     minWidth: 280,
     minHeight: 120,
     frame: false,
