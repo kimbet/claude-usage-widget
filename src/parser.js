@@ -1,215 +1,240 @@
-// Data layer for the widget. Reads two things from Claude Code's
-// local profile:
+// Data layer for the widget. Reads Claude Code's per-session transcripts
 //
-//   ~/.claude/sessions/<pid>.json   — live process registry, one file
-//                                     per Claude Code process. Tells us
-//                                     which sessions are running and
-//                                     what their status (busy/idle) is.
 //   ~/.claude/projects/<cwd-mangled>/<sessionId>.jsonl
-//                                   — per-session transcript. Each
-//                                     assistant message carries a
-//                                     `usage` block with input /
-//                                     output / cache_read /
-//                                     cache_creation token counts and
-//                                     a `model` field.
 //
-// Combining the two gives us, per running session:
-//   - name, cwd, status, last-heartbeat
-//   - context size = sum of the four token counts from the LAST
-//     assistant message (= the conversation state when the model
-//     last replied)
-//   - 15-minute token throughput = sum of (input + output +
-//     cache_creation) over assistant messages with timestamp >= now-15m
+// where each `type: "assistant"` line carries a `usage` block with
+// input / output / cache_read / cache_creation token counts, and
+// computes two aggregates for the UI:
 //
-// Nothing here is async-aware to disk; reads are synchronous because
-// the data volumes are small (each JSONL is read tail-first and we
-// only scan as far back as we need).
+//   - todayTotals(): "new work" tokens + message count since local
+//     midnight, across every project
+//   - timeSeries(): tokens-per-minute buckets over the last N hours,
+//     for the sparkline
+//
+// "New work" = input + output + cache_creation, NOT cache_read —
+// cache_read replays of the conversation dominate raw counts by
+// 10-100x and would make every number meaningless.
+//
+// Transcripts are append-only and can get big (tens of MB), so nothing
+// here ever reads a whole file per poll:
+//
+//   - readJsonlTail() walks a file BACKWARDS in fixed-size chunks via
+//     a file descriptor and stops as soon as the caller has seen
+//     enough (e.g. crossed the time-window boundary).
+//   - todayTotals() additionally keeps a per-file offset cache
+//     (position + running sums): repeated polls only read and parse
+//     the bytes appended since the previous poll. Shrunk/rotated
+//     files reset the entry; a trailing line that hasn't received its
+//     newline yet is counted transiently and only folded into the
+//     cache once complete, so torn writes are neither lost nor
+//     double-counted.
+//
+// Everything is synchronous; per poll the widget now touches a few KB,
+// not the whole corpus. Pure Node, no Electron dependency.
 
 const fs = require('node:fs')
 const path = require('node:path')
 const os = require('node:os')
 
 const HOME = os.homedir()
-const SESSIONS_DIR = path.join(HOME, '.claude', 'sessions')
 const PROJECTS_DIR = path.join(HOME, '.claude', 'projects')
 
-// "Active" = sessions/<pid>.json updated within this many milliseconds
-// AND the recorded pid is still alive. The CLI rewrites the file on
-// every event, so a 10-minute stale gap means the conversation is
-// quiescent; combined with the alive-check, we drop crashed PIDs that
-// left stale registry entries behind.
-const ACTIVE_WINDOW_MS = 10 * 60_000
+const TAIL_CHUNK = 64 * 1024
 
-function pidAlive(pid) {
-  if (typeof pid !== 'number' || pid <= 0) return false
-  try { process.kill(pid, 0); return true } catch (e) {
-    // ESRCH = no such process. EPERM (rare on Windows) = process
-    // exists but we lack permission; still alive.
-    return e.code === 'EPERM'
+// ---------------------------------------------------------------- io --
+
+function readRange(fd, start, end) {
+  const buf = Buffer.alloc(end - start)
+  fs.readSync(fd, buf, 0, end - start, start)
+  return buf.toString('utf8')
+}
+
+// Byte offset just after the last '\n' in [0, size); 0 if none. Scans
+// backwards chunk-wise, so a huge file with a short trailing line costs
+// one small read.
+function lastLineBoundary(fd, size) {
+  let end = size
+  while (end > 0) {
+    const start = Math.max(0, end - TAIL_CHUNK)
+    const buf = Buffer.alloc(end - start)
+    fs.readSync(fd, buf, 0, end - start, start)
+    const idx = buf.lastIndexOf(0x0A)
+    if (idx !== -1) return start + idx + 1
+    end = start
   }
+  return 0
 }
 
-// Throughput window for the "X tok/min" metric.
-const THROUGHPUT_WINDOW_MS = 15 * 60_000
-
-// Per-model context-window cap, in tokens. Used for the "%" display.
-// Default for unrecognised models is 200k (standard Anthropic limit).
-// Arnold uses Opus 4.7 1M — see system prompt. If you switch models,
-// extend this map.
-const CONTEXT_LIMITS = {
-  'claude-opus-4-8': 1_000_000,
-  'claude-opus-4-7': 1_000_000,
-  'claude-opus-4-6': 200_000,
-  'claude-sonnet-4-6': 1_000_000,
-  'claude-sonnet-4-5': 1_000_000,
-  'claude-haiku-4-5': 200_000,
-}
-function contextLimitFor(model) {
-  if (!model) return 200_000
-  // Strip vendor suffixes like "[1m]" or trailing "-YYYYMMDD" date-stamps
-  // before lookup, WITHOUT eating the version number. The model id is
-  // e.g. "claude-opus-4-8", optionally "...-20251001" or "...[1m]".
-  const base = model
-    .replace(/\[.*$/, '')        // drop "[1m]" and anything after
-    .replace(/-\d{8}$/, '')      // drop a trailing date-stamp
-  return CONTEXT_LIMITS[base] ?? CONTEXT_LIMITS[model] ?? 200_000
-}
-
-function readJsonSafe(p) {
-  try { return JSON.parse(fs.readFileSync(p, 'utf8')) } catch { return null }
-}
-
-// Map a working-directory path to Claude Code's folder-name convention.
-// CC replaces every `\`, `/`, and `:` with a single `-` — NOT collapsing
-// runs. So `C:\repos\wine` becomes `C--repos-wine` (the `:` and the `\`
-// each map to one dash). Empirically confirmed against the live profile.
-function mangleCwd(cwd) {
-  return cwd.replace(/[\\\/:]/g, '-')
-}
-
-function listActiveSessions() {
-  let entries = []
-  try { entries = fs.readdirSync(SESSIONS_DIR) } catch { return [] }
-  const now = Date.now()
-  const out = []
-  for (const f of entries) {
-    if (!f.endsWith('.json')) continue
-    const meta = readJsonSafe(path.join(SESSIONS_DIR, f))
-    if (!meta) continue
-    if (meta.kind !== 'interactive') continue
-    // Stale crashed-CLI entries lack both updatedAt and status — drop
-    // them. Empirically CC only writes the registry once it has a
-    // session in steady state.
-    if (typeof meta.updatedAt !== 'number') continue
-    if (now - meta.updatedAt > ACTIVE_WINDOW_MS) continue
-    // PID-alive check catches the case where the CLI was killed
-    // mid-flight without cleaning up its registry file.
-    if (!pidAlive(meta.pid)) continue
-    out.push(meta)
+// Walk the complete ('\n'-terminated) JSON lines of [0, endOffset)
+// backwards (newest first). cb(parsed) returning true stops the walk.
+// Chunk boundaries: the partial line at a chunk's start is carried over
+// (as raw bytes, so multi-byte UTF-8 sequences split by the boundary
+// stay intact) and completed by the next-earlier chunk; only whole
+// lines are ever decoded and parsed. Unparseable lines are skipped.
+function forEachJsonLineBackward(fd, endOffset, cb) {
+  let end = endOffset
+  let carry = null
+  while (end > 0) {
+    const start = Math.max(0, end - TAIL_CHUNK)
+    let chunk = Buffer.alloc(end - start)
+    fs.readSync(fd, chunk, 0, end - start, start)
+    if (carry && carry.length) chunk = Buffer.concat([chunk, carry])
+    let parseFrom = 0
+    if (start > 0) {
+      const firstNl = chunk.indexOf(0x0A)
+      if (firstNl === -1) { carry = chunk; end = start; continue }
+      carry = chunk.subarray(0, firstNl)
+      parseFrom = firstNl + 1
+    }
+    const lines = chunk.subarray(parseFrom).toString('utf8').split('\n')
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim()
+      if (!line) continue
+      let parsed
+      try { parsed = JSON.parse(line) } catch { continue }
+      if (cb(parsed)) return
+    }
+    end = start
   }
-  // Most-recently-active first
-  out.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
-  return out
 }
 
 // Read a JSONL file tail-first, parsing each line. Stops as soon as
-// `stop(parsed, all)` returns true. Avoids loading huge transcripts
-// when we only need the last N relevant messages.
+// `stop(parsed, all)` returns true. The trailing line is included even
+// if the file doesn't end in '\n' (matching what a whole-file read
+// would parse), provided it is complete JSON.
 function readJsonlTail(filePath, stop) {
-  let content
-  try { content = fs.readFileSync(filePath, 'utf8') } catch { return [] }
-  const lines = content.split('\n')
+  let fd
+  try { fd = fs.openSync(filePath, 'r') } catch { return [] }
   const out = []
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i].trim()
-    if (!line) continue
-    let parsed
-    try { parsed = JSON.parse(line) } catch { continue }
-    out.push(parsed)
-    if (stop && stop(parsed, out)) break
-  }
-  return out
+  try {
+    const size = fs.fstatSync(fd).size
+    const boundary = lastLineBoundary(fd, size)
+    let stopped = false
+    const consume = (parsed) => {
+      out.push(parsed)
+      stopped = !!(stop && stop(parsed, out))
+      return stopped
+    }
+    if (boundary < size) {
+      const frag = readRange(fd, boundary, size).trim()
+      if (frag) {
+        let parsed = null
+        try { parsed = JSON.parse(frag) } catch { /* incomplete write */ }
+        if (parsed !== null) consume(parsed)
+      }
+    }
+    if (!stopped) forEachJsonLineBackward(fd, boundary, consume)
+    return out
+  } catch { return out }
+  finally { try { fs.closeSync(fd) } catch { /* ignore */ } }
 }
 
-// Returns per-session live stats. Pulled out so we can test it
-// against any single session file without spinning up an entire scan.
-function statsForSession(meta) {
-  const cwdFolder = mangleCwd(meta.cwd || '')
-  const jsonl = path.join(PROJECTS_DIR, cwdFolder, `${meta.sessionId}.jsonl`)
-  const cutoff = Date.now() - THROUGHPUT_WINDOW_MS
+// ------------------------------------------------------------ totals --
 
-  let lastAssistantUsage = null
-  let lastAssistantModel = null
-  let recentTokens = 0
-  let recentMessages = 0
-  let stopReadingAfter = false
+function newWork(u) {
+  return (u.input_tokens || 0)
+       + (u.output_tokens || 0)
+       + (u.cache_creation_input_tokens || 0)
+}
 
-  readJsonlTail(jsonl, (ev) => {
-    if (ev.type !== 'assistant') return false
-    const u = ev.message?.usage
-    if (!u) return false
-    if (!lastAssistantUsage) {
-      lastAssistantUsage = u
-      lastAssistantModel = ev.message?.model || null
+// Fold one parsed event into an accumulator if it is a today's-work
+// assistant event.
+function addUsage(acc, ev, since) {
+  if (!ev || ev.type !== 'assistant') return
+  const ts = ev.timestamp ? Date.parse(ev.timestamp) : NaN
+  if (!Number.isFinite(ts) || ts < since) return
+  const u = ev.message?.usage
+  if (!u) return
+  acc.tokens += newWork(u)
+  acc.messages += 1
+}
+
+// Per-file incremental state for todayTotals():
+//   pos              — byte offset just after the last complete line
+//                      folded into the sums
+//   tokens/messages  — today's sums up to pos
+// Cleared wholesale when the local day rolls over. Assumes transcripts
+// are append-only (which they are); a same-size in-place rewrite would
+// go unnoticed, a shrink/rotation resets the entry.
+const totalsCache = new Map()
+let totalsCacheDay = 0
+
+function fileTotalsForToday(fp, since) {
+  let fd
+  try { fd = fs.openSync(fp, 'r') } catch { return { tokens: 0, messages: 0 } }
+  try {
+    const size = fs.fstatSync(fd).size
+    let e = totalsCache.get(fp)
+    let fragText = null
+
+    if (!e || size < e.pos) {
+      // First sight of the file today, or it shrank (rotation): full
+      // recount — but tail-bounded, stopping at the first assistant
+      // event from before midnight (transcripts are chronological).
+      e = { pos: lastLineBoundary(fd, size), tokens: 0, messages: 0 }
+      forEachJsonLineBackward(fd, e.pos, (ev) => {
+        if (ev.type !== 'assistant') return false
+        const ts = ev.timestamp ? Date.parse(ev.timestamp) : NaN
+        if (!Number.isFinite(ts)) return false
+        if (ts < since) return true
+        const u = ev.message?.usage
+        if (u) { e.tokens += newWork(u); e.messages += 1 }
+        return false
+      })
+      totalsCache.set(fp, e)
+      if (size > e.pos) fragText = readRange(fd, e.pos, size)
+    } else if (size > e.pos) {
+      // Grown: read only the appended bytes. Complete lines go into
+      // the persistent sums; whatever follows the last '\n' becomes
+      // the transient fragment.
+      const text = readRange(fd, e.pos, size)
+      const lastNl = text.lastIndexOf('\n')
+      if (lastNl === -1) {
+        fragText = text
+      } else {
+        for (const line of text.slice(0, lastNl).split('\n')) {
+          const s = line.trim()
+          if (!s) continue
+          let ev
+          try { ev = JSON.parse(s) } catch { continue }
+          addUsage(e, ev, since)
+        }
+        e.pos += Buffer.byteLength(text.slice(0, lastNl + 1), 'utf8')
+        if (lastNl + 1 < text.length) fragText = text.slice(lastNl + 1)
+      }
     }
-    const ts = ev.timestamp ? Date.parse(ev.timestamp) : NaN
-    if (Number.isFinite(ts) && ts >= cutoff) {
-      // Throughput = "new work" only. cache_read is replayed context
-      // and dominates by 10–100×; counting it makes every session
-      // look like 600k tok/min, which is technically true but useless
-      // for "how fast is this conversation moving?".
-      recentTokens += (u.input_tokens || 0)
-                    + (u.output_tokens || 0)
-                    + (u.cache_creation_input_tokens || 0)
-      recentMessages += 1
-    } else if (lastAssistantUsage) {
-      // We've fallen out of the 15-minute window AND we already have
-      // the last-assistant snapshot — nothing further back is needed.
-      stopReadingAfter = true
+
+    // Trailing not-yet-terminated line: count it for THIS call only
+    // (a whole-file scan would see it too); it enters the cache once
+    // its '\n' arrives. Torn writes simply fail JSON.parse.
+    let extraTokens = 0
+    let extraMessages = 0
+    if (fragText && fragText.trim()) {
+      let ev = null
+      try { ev = JSON.parse(fragText.trim()) } catch { /* incomplete */ }
+      if (ev !== null) {
+        const acc = { tokens: 0, messages: 0 }
+        addUsage(acc, ev, since)
+        extraTokens = acc.tokens
+        extraMessages = acc.messages
+      }
     }
-    return stopReadingAfter
-  })
-
-  const ctxSize = lastAssistantUsage
-    ? (lastAssistantUsage.input_tokens || 0)
-      + (lastAssistantUsage.cache_creation_input_tokens || 0)
-      + (lastAssistantUsage.cache_read_input_tokens || 0)
-    : 0
-
-  const ctxLimit = contextLimitFor(lastAssistantModel)
-  const ctxPct = ctxLimit > 0 ? (ctxSize / ctxLimit) * 100 : 0
-
-  // Rate in tokens / minute, averaged over the actual elapsed time in
-  // the window. If there's only one message at the start, the rate
-  // is meaningless — fall back to "messages × tokens / 15min".
-  const tokensPerMin = recentTokens / 15
-
-  return {
-    sessionId: meta.sessionId,
-    pid: meta.pid,
-    name: meta.name || path.basename(meta.cwd || ''),
-    cwd: meta.cwd,
-    status: meta.status || 'unknown',
-    updatedAt: meta.updatedAt,
-    idleMs: Math.max(0, Date.now() - (meta.updatedAt || Date.now())),
-    model: lastAssistantModel,
-    ctxSize,
-    ctxLimit,
-    ctxPct,
-    recentTokens,
-    recentMessages,
-    tokensPerMin,
-    hasUsageData: !!lastAssistantUsage,
-  }
+    return { tokens: e.tokens + extraTokens, messages: e.messages + extraMessages }
+  } catch {
+    return { tokens: 0, messages: 0 }
+  } finally { try { fs.closeSync(fd) } catch { /* ignore */ } }
 }
 
 // Sum today's tokens across all known projects' JSONLs. "Today" means
-// from local-time midnight onwards. Cheap because we only look at
-// files modified since midnight (others can't have today's events
-// without being touched).
+// from local-time midnight onwards. Cheap on repeated polls: files not
+// touched since midnight are skipped via mtime, everything else is
+// served from the per-file offset cache and only reads its append
+// delta.
 function todayTotals() {
   const midnight = new Date(); midnight.setHours(0, 0, 0, 0)
   const since = midnight.getTime()
+  if (totalsCacheDay !== since) { totalsCache.clear(); totalsCacheDay = since }
+
   let projectDirs = []
   try { projectDirs = fs.readdirSync(PROJECTS_DIR) } catch { return { tokens: 0, messages: 0 } }
 
@@ -224,27 +249,18 @@ function todayTotals() {
       const fp = path.join(dirPath, f)
       let stat
       try { stat = fs.statSync(fp) } catch { continue }
+      // Untouched since midnight -> cannot contain today's events
+      // (mtime only moves forward as events are appended).
       if (stat.mtimeMs < since) continue
-      // Walk the file tail-first; stop when we cross midnight.
-      readJsonlTail(fp, (ev) => {
-        if (ev.type !== 'assistant') return false
-        const ts = ev.timestamp ? Date.parse(ev.timestamp) : NaN
-        if (!Number.isFinite(ts)) return false
-        if (ts < since) return true  // past midnight — stop
-        const u = ev.message?.usage
-        if (!u) return false
-        // Same definition as the per-session 15-min rate — "new work"
-        // excluding cached replays.
-        tokens += (u.input_tokens || 0)
-                + (u.output_tokens || 0)
-                + (u.cache_creation_input_tokens || 0)
-        messages += 1
-        return false
-      })
+      const t = fileTotalsForToday(fp, since)
+      tokens += t.tokens
+      messages += t.messages
     }
   }
   return { tokens, messages }
 }
+
+// ------------------------------------------------------------ series --
 
 // Tokens-per-minute in fixed-width buckets over the last `hoursBack`
 // hours, aggregated across every project's JSONL. Returns an array of
@@ -252,7 +268,8 @@ function todayTotals() {
 // index N-1 is the bucket containing "now". Each entry:
 //   { t0, t1, tokens, rate }
 // where rate = tokens / bucketMin (tokens-per-minute). Same "new work"
-// definition as the per-session rate.
+// definition as the totals. The tail walk stops at the window edge, so
+// per call this reads at most the last `hoursBack` hours of each file.
 function timeSeries(hoursBack = 4, bucketMin = 5) {
   const now = Date.now()
   const since = now - hoursBack * 3_600_000
@@ -283,9 +300,7 @@ function timeSeries(hoursBack = 4, bucketMin = 5) {
         const u = ev.message?.usage
         if (!u) return false
         const idx = Math.min(n - 1, Math.max(0, Math.floor((ts - since) / bucketMs)))
-        tokens[idx] += (u.input_tokens || 0)
-                     + (u.output_tokens || 0)
-                     + (u.cache_creation_input_tokens || 0)
+        tokens[idx] += newWork(u)
         return false
       })
     }
@@ -300,22 +315,9 @@ function timeSeries(hoursBack = 4, bucketMin = 5) {
   return { hoursBack, bucketMin, buckets }
 }
 
-function scan() {
-  // Drop freshly-started sessions that have no transcript yet: their
-  // <pid>.json registry entry exists before the first assistant reply,
-  // so model is unknown and contextLimitFor() defaults to 200k — they'd
-  // otherwise render as a bogus "0 / 200k (0%)" row.
-  const sessions = listActiveSessions()
-    .map(statsForSession)
-    .filter(s => s.hasUsageData)
-  const totals = todayTotals()
-  return { sessions, totals, scannedAt: Date.now() }
-}
-
-// Slower path for the chart — separated so the renderer can poll it
-// on its own cadence (much less often than scan()).
+// Wrapper for the chart bridge — keeps the { series, scannedAt } shape.
 function scanSeries(hoursBack = 4, bucketMin = 5) {
   return { series: timeSeries(hoursBack, bucketMin), scannedAt: Date.now() }
 }
 
-module.exports = { scan, scanSeries, statsForSession, listActiveSessions, todayTotals, timeSeries, contextLimitFor, mangleCwd }
+module.exports = { todayTotals, timeSeries, scanSeries, readJsonlTail }

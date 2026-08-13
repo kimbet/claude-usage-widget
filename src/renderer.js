@@ -1,8 +1,9 @@
-// Renderer. Polls window.widget.scan() every 2s, renders DOM from the
-// returned snapshot. Stays dumb on purpose: no caching, no animation
-// logic beyond CSS, no event coalescing. Performance is fine because
-// the snapshot is tiny (~N sessions × ~10 numbers) and parser.js does
-// the heavy lifting once per tick.
+// Renderer. Polls window.widget on three independent cadences — today
+// totals (30 s), throughput chart (30 s), subscription quota (60 s) —
+// and renders DOM from the returned snapshots. Stays dumb on purpose:
+// no framework, no animation logic beyond CSS. The cadences are slow
+// because the underlying numbers move slowly and every totals/series
+// poll costs (cached, incremental) disk reads in the preload.
 
 const $totals   = document.getElementById('totals')
 const $scanned  = document.getElementById('scanned')
@@ -31,9 +32,9 @@ function escape(s) {
   }[c]))
 }
 
-async function refresh() {
+async function refreshTotals() {
   let snap
-  try { snap = await window.widget.scan() } catch (e) {
+  try { snap = await window.widget.todayTotals() } catch (e) {
     return
   }
 
@@ -61,11 +62,13 @@ function fitHeight() {
   })
 }
 
-refresh()
-setInterval(refresh, 2000)
+// Totals mutate on every assistant reply, but the display only shows
+// two coarse numbers — 30 s is plenty, and each poll beyond the first
+// only reads what was appended to the transcripts since the last one.
+refreshTotals()
+setInterval(refreshTotals, 30_000)
 
-// Chart — separate cadence because the bucket data only mutates every
-// few minutes; polling it on the 2-second loop is wasted I/O.
+// Chart — 5-minute buckets can't visibly change faster than this.
 const SVG_NS = 'http://www.w3.org/2000/svg'
 const $chart = document.getElementById('chart')
 const $peak  = document.getElementById('chart-peak')
@@ -123,7 +126,7 @@ async function refreshChart() {
   }
 }
 refreshChart()
-setInterval(refreshChart, 10_000)
+setInterval(refreshChart, 30_000)
 
 // Subscription quota — Anthropic OAuth /api/oauth/usage endpoint.
 // Updates much more slowly than session data; poll every 60 s.
@@ -137,17 +140,6 @@ function fmtResetIn(ms) {
   const h = Math.floor(ms / 3_600_000)
   const m = Math.floor((ms % 3_600_000) / 60_000)
   return m === 0 ? `${h}h` : `${h}h${m}m`
-}
-
-function fmtResetAt(t) {
-  if (!t) return ''
-  const d = new Date(t)
-  // Today → HH:MM, otherwise DD.MM
-  const today = new Date(); today.setHours(0,0,0,0)
-  const isToday = d.getTime() < today.getTime() + 86_400_000
-  return isToday
-    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    : d.toLocaleDateString([], { day: '2-digit', month: '2-digit' })
 }
 
 function severityPct(pct) {
