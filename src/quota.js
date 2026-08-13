@@ -160,13 +160,17 @@ async function refreshIfNeeded(configDir, force) {
   try { return await refreshInFlight.get(configDir) } catch { return readCreds(configDir) }
 }
 
-function shape(period) {
+// Flatten a single period block from the API response. Server returns
+// utilization (0-100 integer, may exceed 100 with extra usage) and
+// resets_at (ISO string, UTC). `now` is injectable so the function is
+// unit-testable independent of the network call.
+function shapePeriod(period, now = Date.now()) {
   if (!period) return null
   const resetsAt = period.resets_at ? new Date(period.resets_at).getTime() : null
   return {
     utilization: period.utilization ?? 0,
     resetsAt,
-    resetsInMs: resetsAt ? Math.max(0, resetsAt - Date.now()) : null,
+    resetsInMs: resetsAt ? Math.max(0, resetsAt - now) : null,
   }
 }
 
@@ -204,10 +208,10 @@ async function fetchQuota(configDir = DEFAULT_DIR) {
   try { body = await res.json() } catch (e) { return { error: 'parse', message: e.message } }
 
   return {
-    fiveHour: shape(body.five_hour),
-    sevenDay: shape(body.seven_day),
-    sevenDayOpus: shape(body.seven_day_opus),
-    sevenDaySonnet: shape(body.seven_day_sonnet),
+    fiveHour: shapePeriod(body.five_hour),
+    sevenDay: shapePeriod(body.seven_day),
+    sevenDayOpus: shapePeriod(body.seven_day_opus),
+    sevenDaySonnet: shapePeriod(body.seven_day_sonnet),
     extraUsage: body.extra_usage || null,
     raw: body,
     fetchedAt: Date.now(),
@@ -224,4 +228,4 @@ async function fetchAllQuota() {
   return { accounts: results, fetchedAt: Date.now() }
 }
 
-module.exports = { fetchQuota, fetchAllQuota, loadAccounts }
+module.exports = { fetchQuota, fetchAllQuota, loadAccounts, shapePeriod }

@@ -261,3 +261,46 @@ test('todayTotals: empty projects dir yields zeros', () => {
     assert.deepEqual(parser.todayTotals(), { tokens: 0, messages: 0 })
   } finally { cleanup() }
 })
+
+// ---- timeSeries(): bucket boundary handling ----
+// Rescued from agent/ideas-2026-07-11 and adapted (the transcript
+// helper there used mangleCwd(), which is gone — the aggregators
+// enumerate every project folder regardless of its name).
+
+test('timeSeries: places tokens into the correct time bucket', () => {
+  const { parser, projectsDir, cleanup } = freshParser()
+  try {
+    const now = Date.now()
+    const hoursBack = 1
+    const bucketMin = 10 // 6 buckets of 10 minutes across the 1h window
+    const since = now - hoursBack * 3_600_000
+    writeProjectFile(projectsDir, 'proj-series', 's.jsonl', jsonl([
+      // First bucket (just after `since`; 5s slack so the window edge
+      // computed inside scanSeries a moment later still contains it).
+      assistantEvent(since + 5_000, 1_000, 0),
+      // Last bucket (just before "now").
+      assistantEvent(now - 1_000, 2_000, 0),
+    ]))
+    const { series } = parser.scanSeries(hoursBack, bucketMin)
+    assert.equal(series.buckets.length, 6)
+    assert.equal(series.buckets[0].tokens, 1_000)
+    assert.equal(series.buckets[5].tokens, 2_000)
+    assert.equal(series.buckets[0].rate, 1_000 / bucketMin)
+    assert.equal(series.hoursBack, hoursBack)
+    assert.equal(series.bucketMin, bucketMin)
+  } finally { cleanup() }
+})
+
+test('timeSeries: events outside the window are excluded', () => {
+  const { parser, projectsDir, cleanup } = freshParser()
+  try {
+    const now = Date.now()
+    writeProjectFile(projectsDir, 'proj-series', 's.jsonl', jsonl([
+      assistantEvent(now - 2 * 3_600_000, 9_000, 9_000),  // 2h ago — outside 1h window
+      assistantEvent(now - 60_000, 10, 20),               // inside
+    ]))
+    const { series } = parser.scanSeries(1, 10)
+    const total = series.buckets.reduce((s, b) => s + b.tokens, 0)
+    assert.equal(total, 30)
+  } finally { cleanup() }
+})
