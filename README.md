@@ -1,49 +1,79 @@
 # claude-usage-widget
 
-Always-on-top floating widget for Windows that shows live status,
-context utilisation and 15-minute throughput of every active Claude
-Code session on the machine.
+Always-on-top floating widget for Windows that shows your live Claude
+subscription quota (5-hour and 7-day windows) for **every logged-in
+Claude account** on the machine, plus a 4-hour throughput sparkline
+and today's token total from Claude Code's local logs.
 
 ```
-┌─ Claude Code Usage ─────────────┐
-│ ● wine        busy              │
-│   ████████░░  195k / 1M  (20%)  │
-│   17.2k tok/min · last 15m      │
-│                                 │
-│ ● around      idle 3m           │
-│   █░░░░░░░░░  89k / 1M   (9%)   │
-│   0 tok/min                     │
-│                                 │
-│ Today: 2.8M tok      220 msg    │
-└─────────────────────────────────┘
+┌─ Claude Code ──────── 21:04:12 ─ ⋯ ─┐
+│ HAUPT                               │
+│  5h  ██████░░░░   62 %       1h12m  │
+│      ████░░░░░░   41 %  Zeit        │
+│  7d  ███░░░░░░░   31 %       2d 3h  │
+│ ACCT2                               │
+│  5h  █░░░░░░░░░    8 %       4h55m  │
+│  7d  ██░░░░░░░░   17 %       5d 1h  │
+│ LAST 4H              PEAK 84K T/MIN │
+│  ▁▂▅▃▁▁▂▇▅▂▁▃▂▁                     │
+│ Today: 2.8M                220 msg  │
+└─────────────────────────────────────┘
 ```
 
 ## What it shows
 
-- **One row per active session.** "Active" = the CLI's process is
-  still alive and the registry file in `~/.claude/sessions/<pid>.json`
-  has been updated within the last 10 minutes.
-- **busy / idle** indicator — green dot busy, amber dot idle (with
-  age since last heartbeat).
-- **Context bar + percentage** — `input + cache_read + cache_creation`
-  of the most recent assistant message in the session's JSONL,
-  divided by the model's known context limit. Bar tints amber at
-  ≥70% and red at ≥90%.
-- **Tokens per minute over the last 15 minutes** — "new work" only
-  (input + output + cache_creation, **not** cache_read), because
-  cache_read replays of the conversation dominate raw counts by
-  10–100× and make every session look like 600k tok/min.
-- **Subscription quota** — live 5-hour and 7-day window utilisation
-  with reset countdown, fetched once a minute from Anthropic's
-  `/api/oauth/usage` endpoint (same source as Claude Code's `/usage`
-  slash command). Auth via the OAuth token in
-  `~/.claude/.credentials.json`; nothing else leaves the machine.
-- **4-hour throughput sparkline** — tokens-per-minute in 5-min
+- **Subscription quota, per account** — live 5-hour and 7-day window
+  utilisation with reset countdown, fetched once a minute from
+  Anthropic's `/api/oauth/usage` endpoint (the same source as Claude
+  Code's `/usage` slash command). Bars tint amber at ≥75 % and red
+  at ≥90 %.
+- **Time-elapsed bar** — a thin second bar under each quota bar
+  showing how far through the current window you are by *time*. If
+  the usage bar is ahead of the time bar you're burning quota faster
+  than the clock; if it's behind, you have headroom.
+- **4-hour throughput sparkline** — tokens per minute in 5-minute
   buckets across every project. Y-axis capped at the 95th-percentile
-  rate so a single session-start cache_creation spike doesn't
-  flatten the rest of the chart.
-- **Today totals** — same "new work" definition, summed across
-  every project's JSONL, from local-time midnight.
+  rate so a single session-start cache_creation spike doesn't flatten
+  the rest of the chart.
+- **Today totals** — "new work" tokens (input + output +
+  cache_creation, **not** cache_read) summed across every project's
+  transcript, from local-time midnight.
+
+If a quota fetch fails transiently (network blip, token refresh in
+flight), the widget keeps showing that account's last good numbers
+with an amber "stale" note instead of blanking the row.
+
+## Multi-account
+
+The widget discovers accounts automatically: it scans your home
+directory for directories matching `.claude*` that contain a
+`.credentials.json` (i.e. a completed Claude Code login).
+
+Display names are derived from the directory name:
+
+| Directory        | Shown as |
+| ---------------- | -------- |
+| `.claude`        | `haupt`  |
+| `.claude-acct2`  | `acct2`  |
+| `.claude-<name>` | `<name>` |
+
+Order is stable: `haupt` first, the rest alphabetically.
+
+To override discovery (different names, different order, extra or
+fewer accounts), add an `accounts` array to
+`~/.claude-usage-widget.json` (the same file that stores the window
+position):
+
+```json
+{
+  "accounts": [
+    { "name": "arbeit", "configDir": "C:\\Users\\me\\.claude" },
+    { "name": "privat", "configDir": "C:\\Users\\me\\.claude-acct2" }
+  ]
+}
+```
+
+If the file has no valid `accounts` array, discovery runs as normal.
 
 ## Run
 
@@ -68,6 +98,10 @@ npm start
 Right-click the widget for a context menu (toggle always-on-top,
 reload, DevTools, quit). Drag the header to move; window position
 persists in `~/.claude-usage-widget.json`.
+
+The widget works on any machine that has Claude Code installed and
+Node.js 22+, and it shows the quota of the accounts logged in under
+*that* user — `~/.claude*` is per-user.
 
 ## Autostart on Windows (optional)
 
@@ -96,70 +130,55 @@ foreach ($dst in @(
 To disable autostart later, delete
 `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Claude Usage Widget.lnk`.
 
-## Sharing with a friend
+## Data sources
 
-The widget only reads local files under `~/.claude/`. It works on any
-machine that has Claude Code installed and Node.js 22+.
+- `~/.claude*/.credentials.json` — one per account. The OAuth access
+  token is sent as `Authorization: Bearer …` to
+  `https://api.anthropic.com/api/oauth/usage`. When a token is near
+  expiry (or rejected), the widget exchanges the stored refresh token
+  against the same `console.anthropic.com` endpoint Claude Code
+  itself uses and **writes the new token pair back atomically** into
+  the same `.credentials.json` — exactly what Claude Code does on its
+  own next start.
+- `~/.claude/projects/<project>/<sessionId>.jsonl` — Claude Code's
+  per-session transcripts (read-only). Each `type: "assistant"` line
+  carries `message.usage` with token counts; the sparkline and the
+  today totals are summed from these. Reads are incremental: the
+  widget remembers its per-file position and only reads what was
+  appended since the last poll.
 
-For a friend on Windows:
-
-```sh
-git clone https://github.com/kimbet/claude-usage-widget.git
-cd claude-usage-widget
-```
-
-Then **double-click `start.bat`** — it installs deps on first run and
-starts the widget. No terminal knowledge required after the clone.
-
-The widget shows their sessions, not yours — `~/.claude/` is per-user.
-For autostart, run the PowerShell snippet above from the repo root.
-
-On macOS/Linux the parser logic is the same; `npm start` works there
-too, though the path-mangling convention (see `mangleCwd` in
-`src/parser.js`) was verified on Windows only — adjust if Claude Code's
-folder layout differs on those OSes.
-
-## Data sources (read-only)
-
-- `~/.claude/sessions/<pid>.json` — Claude Code's live process
-  registry. Has `pid`, `sessionId`, `cwd`, `status` (`"busy"`/`"idle"`),
-  `name`, `updatedAt`.
-- `~/.claude/projects/<mangled-cwd>/<sessionId>.jsonl` — per-session
-  transcript. Each `type: "assistant"` line carries `message.usage`
-  with `input_tokens`, `output_tokens`, `cache_creation_input_tokens`,
-  `cache_read_input_tokens`, and `message.model`.
-- `~/.claude/.credentials.json` — OAuth access token, used solely as
-  `Authorization: Bearer …` against `https://api.anthropic.com/api/oauth/usage`
-  (same endpoint Claude Code's own `/usage` command hits). The
-  response carries the 5-hour and 7-day window utilisation.
-
-Apart from the once-per-minute call to `api.anthropic.com`, nothing
-leaves the machine. No telemetry.
+Apart from the quota calls to `api.anthropic.com` /
+`console.anthropic.com`, nothing leaves the machine. No telemetry.
 
 ## Architecture
 
 - `main.js` — Electron main process. One frameless, transparent,
-  always-on-top BrowserWindow. Position/size persisted across
-  restarts. Registers an IPC handler for the right-click context
-  menu.
-- `preload.js` — exposes a sandboxed `window.widget` API to the
-  renderer with `scan()` (single snapshot) and `openContextMenu()`.
-- `src/parser.js` — all data work: lists active sessions, reads
-  each session's JSONL tail-first, computes context size + 15-min
-  rate. Pure Node, no Electron dependency — usable from any script.
-- `src/quota.js` — Anthropic OAuth usage endpoint client. Reads the
-  CC OAuth token, calls `/api/oauth/usage`, flattens the response
-  into `fiveHour` / `sevenDay` / etc.
-- `src/renderer.js` — polls `window.widget.scan()` every 2 seconds
-  and re-renders the DOM. No virtual DOM, no framework; the data
-  volume is tiny.
-- `src/index.html` + `src/styles.css` — the UI. Dark glass look
-  via `backdrop-filter`.
+  always-on-top BrowserWindow; position/size persisted across
+  restarts; right-click context menu.
+- `preload.js` — exposes a minimal `window.widget` API to the
+  sandboxed renderer.
+- `src/parser.js` — reads the transcript JSONLs (tail-first,
+  incremental) and computes the today totals and the throughput
+  series. Pure Node, no Electron dependency.
+- `src/quota.js` — account discovery + Anthropic OAuth usage client
+  (fetch, token refresh, response flattening). Pure Node.
+- `src/renderer.js` — polls via `window.widget` and re-renders the
+  DOM. No framework; the data volume is tiny.
+- `src/index.html` + `src/styles.css` — the UI. Dark glass look via
+  `backdrop-filter`.
+
+## Tests
+
+```sh
+npm test
+```
+
+Runs the unit tests (`node --test`, no dependencies) against
+synthetic fixtures in a temp directory. The tests never read your
+real `~/.claude*` profiles and never talk to the network.
 
 ## Tuning
 
-- Refresh interval: `src/renderer.js` line `setInterval(refresh, 2000)`.
-- "Active" stale-window: `src/parser.js` `ACTIVE_WINDOW_MS`.
-- Throughput window: `src/parser.js` `THROUGHPUT_WINDOW_MS`.
-- Per-model context cap: `src/parser.js` `CONTEXT_LIMITS` map. Default
-  for unknown models is 200k.
+Poll cadences live at the bottom of `src/renderer.js`: today totals
+and sparkline every 30 s, quota every 60 s. The sparkline window and
+bucket size are the `scanSeries(4, 5)` arguments (hours, minutes).

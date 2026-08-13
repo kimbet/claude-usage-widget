@@ -57,10 +57,10 @@ paraphrase, don't retry blindly.
 
 ## What the widget does, in one line
 
-Always-on-top window showing per-session context usage + busy/idle,
-your live 5-hour and 7-day Claude subscription quota with reset
-countdown, a 4-hour throughput sparkline, and today's totals. All
-local; one read-only API call/minute to `api.anthropic.com`.
+Always-on-top window showing your live 5-hour and 7-day Claude
+subscription quota (all logged-in accounts) with reset countdown, a
+4-hour throughput sparkline, and today's totals. All local; one API
+call per account per minute to `api.anthropic.com`.
 
 ## If the friend isn't using Claude Code yet
 
