@@ -5,9 +5,10 @@
 //
 // Multi-account (3.7.2026): every cred function takes a configDir, so the
 // widget can show usage of ALL logged-in accounts, not just ~/.claude.
-// Account list comes from IP-Tagebuch/config/accounts.json (single source
-// of truth); any account whose <configDir>/.credentials.json exists is
-// shown. Default configDir = ~/.claude keeps the single-account path.
+// The account list is discovered from the home directory (any .claude*
+// dir with a .credentials.json), overridable via an `accounts` array in
+// ~/.claude-usage-widget.json — see loadAccounts() below. Default
+// configDir = ~/.claude keeps the single-account path.
 //
 // Refresh: when the access token is near expiry (or returns 401), we
 // exchange the stored refresh_token for a new pair against the same
@@ -19,7 +20,8 @@ const path = require('node:path')
 const os = require('node:os')
 
 const DEFAULT_DIR = path.join(os.homedir(), '.claude')
-const ACCOUNTS_JSON = 'C:\\repos\\IP-Tagebuch\\config\\accounts.json'
+// Same file main.js stores the window position in — one widget config.
+const OVERRIDE_BASENAME = '.claude-usage-widget.json'
 const ENDPOINT = 'https://api.anthropic.com/api/oauth/usage'
 const TOKEN_ENDPOINT = 'https://console.anthropic.com/v1/oauth/token'
 const CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'
@@ -27,18 +29,65 @@ const REFRESH_SKEW_MS = 5 * 60_000
 
 const credPath = (configDir) => path.join(configDir || DEFAULT_DIR, '.credentials.json')
 
-// Account list: every logged-in account from IP-Tagebuch/config/accounts.json
-// (config_dir with an existing .credentials.json). Falls back to just the
-// default ~/.claude account so the widget always shows something.
-function loadAccounts() {
+// Display name for a discovered config dir:
+//   .claude         -> haupt      (the primary login)
+//   .claude-<name>  -> <name>     (e.g. .claude-acct2 -> acct2)
+//   .claude<other>  -> claude<other>  (dir name without the dot)
+function accountName(dirName) {
+  if (dirName === '.claude') return 'haupt'
+  if (dirName.startsWith('.claude-') && dirName.length > 8) return dirName.slice(8)
+  return dirName.slice(1)
+}
+
+// Optional user override: an `accounts` array in ~/.claude-usage-widget.json
+// ({ accounts: [{ name, configDir }, ...] }). Entries without a usable
+// name/configDir are skipped; if nothing usable remains (or the file is
+// missing/broken JSON), returns null so discovery takes over.
+function readOverrideAccounts(home) {
   try {
-    const cfg = JSON.parse(fs.readFileSync(ACCOUNTS_JSON, 'utf8'))
-    const accs = (cfg.accounts || [])
-      .map(a => ({ name: a.name, configDir: a.config_dir }))
-      .filter(a => a.configDir && fs.existsSync(credPath(a.configDir)))
-    if (accs.length) return accs
-  } catch { /* ignore — fall back below */ }
-  return [{ name: 'haupt', configDir: DEFAULT_DIR }]
+    const cfg = JSON.parse(fs.readFileSync(path.join(home, OVERRIDE_BASENAME), 'utf8'))
+    if (!Array.isArray(cfg.accounts)) return null
+    const accs = cfg.accounts
+      .filter(a => a && typeof a.name === 'string' && a.name
+                && typeof a.configDir === 'string' && a.configDir)
+      .map(a => ({ name: a.name, configDir: a.configDir }))
+    return accs.length ? accs : null
+  } catch { return null }
+}
+
+// Auto-discovery: every dir in `home` matching .claude* that contains a
+// .credentials.json (= a completed Claude Code login). The existsSync on
+// <dir>/.credentials.json doubles as the is-a-directory check, so plain
+// files like .claude-usage-widget.json fall out naturally.
+function discoverAccounts(home) {
+  let entries = []
+  try { entries = fs.readdirSync(home) } catch { return [] }
+  const accs = []
+  for (const name of entries) {
+    if (!name.startsWith('.claude')) continue
+    const configDir = path.join(home, name)
+    try { if (!fs.existsSync(credPath(configDir))) continue } catch { continue }
+    accs.push({ name: accountName(name), configDir })
+  }
+  // Stable order: haupt first, then alphabetically by display name.
+  accs.sort((a, b) => {
+    if (a.name === 'haupt') return b.name === 'haupt' ? 0 : -1
+    if (b.name === 'haupt') return 1
+    return a.name < b.name ? -1 : a.name > b.name ? 1 : 0
+  })
+  return accs
+}
+
+// Account list: override file if it has usable entries, else discovery,
+// else just the default ~/.claude account so the widget always shows
+// something (and its "no oauth token" error points at the right path).
+// `home` is injectable for tests; production callers use the default.
+function loadAccounts(home = os.homedir()) {
+  const override = readOverrideAccounts(home)
+  if (override) return override
+  const found = discoverAccounts(home)
+  if (found.length) return found
+  return [{ name: 'haupt', configDir: path.join(home, '.claude') }]
 }
 
 function userAgent() {

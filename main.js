@@ -13,8 +13,13 @@ const STATE_PATH = path.join(os.homedir(), '.claude-usage-widget.json')
 function loadState() {
   try { return JSON.parse(fs.readFileSync(STATE_PATH, 'utf8')) } catch { return {} }
 }
-function saveState(s) {
-  try { fs.writeFileSync(STATE_PATH, JSON.stringify(s, null, 2)) } catch { /* ignore */ }
+// Merge, don't clobber: the same file carries the user's optional
+// multi-account override (`accounts` — see src/quota.js loadAccounts).
+// Persisting the window position must not wipe hand-written keys.
+function saveState(patch) {
+  try {
+    fs.writeFileSync(STATE_PATH, JSON.stringify({ ...loadState(), ...patch }, null, 2))
+  } catch { /* ignore */ }
 }
 
 let win = null
