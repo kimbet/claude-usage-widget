@@ -18,6 +18,11 @@ contextBridge.exposeInMainWorld('widget', {
   // Codex subscription limits; only normalized usage reaches the renderer.
   fetchCodexQuota: () => ipcRenderer.invoke('codex-quota'),
   openContextMenu: () => ipcRenderer.send('context-menu'),
+  // Click-through control: main ignores mouse input except while the
+  // pointer is over the ⋯ button or the widget is unlocked for moving.
+  menuHover: (over) => ipcRenderer.send('menu-hover', over),
+  onMenuClosed: (cb) => ipcRenderer.on('menu-closed', () => cb()),
+  onUnlocked: (cb) => ipcRenderer.on('unlocked', (e, on) => cb(on)),
   // Fit the window height to the rendered content.
   resizeContent: (h) => ipcRenderer.send('resize-content', h),
 })

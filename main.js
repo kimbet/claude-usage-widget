@@ -74,6 +74,11 @@ function createWindow() {
 
   win.loadFile(path.join(__dirname, 'src', 'index.html'))
 
+  // Click-through by default: every click lands on whatever is below the
+  // widget. `forward` keeps mousemove flowing to the renderer so it can
+  // flip hit-testing on while the pointer is over the ⋯ button.
+  setClickThrough(true)
+
   const persist = () => {
     if (!win || win.isDestroyed()) return
     const [w, h] = win.getSize()
@@ -85,9 +90,36 @@ function createWindow() {
   win.on('close', persist)
 }
 
-// Right-click context menu — quit + reload + toggle-always-on-top
+// Two independent reasons to accept mouse input: the pointer is over the
+// ⋯ button (renderer reports it), or the user unlocked the widget via the
+// menu to move/resize it. Everything else passes through.
+let overMenuButton = false
+let unlocked = false
+function setClickThrough(on) {
+  if (!win || win.isDestroyed()) return
+  if (on) win.setIgnoreMouseEvents(true, { forward: true })
+  else win.setIgnoreMouseEvents(false)
+}
+function applyMouseMode() {
+  setClickThrough(!(overMenuButton || unlocked))
+}
+ipcMain.on('menu-hover', (e, over) => {
+  overMenuButton = !!over
+  applyMouseMode()
+})
+function setUnlocked(on) {
+  unlocked = on
+  applyMouseMode()
+  win?.webContents.send('unlocked', on)
+}
+
+// ⋯ menu — move/resize toggle, always-on-top, reload, quit
 function showContextMenu() {
   const menu = Menu.buildFromTemplate([
+    {
+      label: unlocked ? '✓ Verschieben / Größe ändern' : 'Verschieben / Größe ändern',
+      click: () => setUnlocked(!unlocked),
+    },
     {
       label: win?.isAlwaysOnTop() ? '✓ Always on top' : 'Always on top',
       click: () => win?.setAlwaysOnTop(!win.isAlwaysOnTop(), 'screen-saver'),
@@ -97,7 +129,17 @@ function showContextMenu() {
     { type: 'separator' },
     { label: 'Quit', click: () => app.quit() },
   ])
-  menu.popup({ window: win })
+  menu.popup({
+    window: win,
+    // The pointer usually leaves the button while the native menu is
+    // open; the renderer can't see that, so drop back to click-through
+    // and let the next mousemove over the button re-arm it.
+    callback: () => {
+      overMenuButton = false
+      applyMouseMode()
+      win?.webContents.send('menu-closed')
+    },
+  })
 }
 ipcMain.on('context-menu', showContextMenu)
 ipcMain.handle('codex-quota', () => codexQuota.fetchCodexQuota())

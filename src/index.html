@@ -6,35 +6,35 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <!-- The header is the drag handle. CSS `-webkit-app-region: drag`
-       makes the whole bar grab-and-move; the close button overrides
-       it back to a clickable area so dragging doesn't swallow it. -->
+  <!-- Click-through widget (main.js): only the ⋯ button takes clicks.
+       The header becomes a drag handle only while unlocked via the menu.
+       No title= tooltips — hover never reaches them. -->
   <header id="drag">
     <span class="title">Claude + Codex</span>
     <span class="scanned" id="scanned">—</span>
-    <button class="iconbtn" id="menu" title="Menu">⋯</button>
+    <button class="iconbtn" id="menu">⋯</button>
   </header>
 
   <div class="provider-title">Claude Code</div>
-  <section id="quota" class="quota" title="Claude: verbrauchtes Kontingent und Zeit bis zur Rücksetzung">
+  <section id="quota" class="quota">
     <div class="empty">—</div>
   </section>
 
   <div class="provider-title codex-title">Codex <span id="codex-plan"></span></div>
-  <section id="codex-quota" class="quota" title="Codex: verbrauchtes Kontingent und Zeit bis zur Rücksetzung">
+  <section id="codex-quota" class="quota">
     <div class="empty">Wird geladen …</div>
   </section>
 
-  <section id="chart-wrap" title="Claude throughput — new work per minute, last 4h in 5-min buckets">
-    <div class="chart-head">
-      <span class="lbl">Claude · last 4h</span>
-      <span class="peak" id="chart-peak">peak —</span>
-    </div>
+  <!-- Claude throughput: 4h sparkline (5-min buckets) + absolute numbers. -->
+  <section id="foot">
     <svg id="chart" viewBox="0 0 200 40" preserveAspectRatio="none"></svg>
+    <div class="fstats">
+      <div id="totals">heute — tok · — msg</div>
+      <div id="rate">jetzt — · peak —</div>
+    </div>
   </section>
 
-  <footer id="totals">Claude today: — · — msg</footer>
-
+  <script src="pace.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

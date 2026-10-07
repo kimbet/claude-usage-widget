@@ -8,9 +8,26 @@
 const $totals   = document.getElementById('totals')
 const $scanned  = document.getElementById('scanned')
 
-document.getElementById('menu').addEventListener('click', () => {
+const $menu = document.getElementById('menu')
+$menu.addEventListener('click', () => {
   window.widget.openContextMenu()
 })
+
+// Click-through: main forwards mousemove while ignoring clicks, so track
+// whether the pointer is over the ⋯ button and tell main only on change.
+// mousemove (not mouseenter) because after the native menu closes the
+// pointer may already sit on the button without a fresh enter event.
+let overMenu = false
+function setOverMenu(over) {
+  if (over === overMenu) return
+  overMenu = over
+  $menu.classList.toggle('hot', over)
+  window.widget.menuHover(over)
+}
+document.addEventListener('mousemove', e => setOverMenu(!!e.target.closest('#menu')))
+document.addEventListener('mouseleave', () => setOverMenu(false))
+window.widget.onMenuClosed(() => { overMenu = false; $menu.classList.remove('hot') })
+window.widget.onUnlocked(on => document.body.classList.toggle('unlocked', on))
 
 // Format integers as "1.2k", "12.4k", "1.2M".
 function fmtTokens(n) {
@@ -41,10 +58,7 @@ async function refreshTotals() {
   $scanned.textContent = new Date(snap.scannedAt).toLocaleTimeString()
 
   const t = snap.totals
-  $totals.innerHTML = `
-    <span>Claude today: ${fmtTokens(t.tokens)}</span>
-    <span>${t.messages} msg</span>
-  `
+  $totals.innerHTML = `heute <b>${fmtTokens(t.tokens)}</b> tok · <b>${t.messages}</b> msg`
   fitHeight()
 }
 
@@ -71,7 +85,7 @@ setInterval(refreshTotals, 30_000)
 // Chart — 5-minute buckets can't visibly change faster than this.
 const SVG_NS = 'http://www.w3.org/2000/svg'
 const $chart = document.getElementById('chart')
-const $peak  = document.getElementById('chart-peak')
+const $rate  = document.getElementById('rate')
 
 function renderChart(series) {
   const buckets = series.buckets
@@ -88,7 +102,8 @@ function renderChart(series) {
   const maxRate = Math.max(p95, ...sorted.slice(-3)) // include top 3 in case of all-zero
   const yMax = Math.max(maxRate, 1)
 
-  $peak.textContent = `peak ${fmtTokens(Math.round(Math.max(...sorted)))} tok/min`
+  const nowRate = Math.round(buckets[n - 1].rate)
+  $rate.innerHTML = `jetzt <b>${fmtTokens(nowRate)}</b>/min · peak <b>${fmtTokens(Math.round(sorted[n - 1]))}</b> · 4h`
 
   // x = bucket centre; first bucket at x=0, last bucket at x=W
   const xOf = i => (n === 1) ? W : (i / (n - 1)) * W
@@ -132,58 +147,41 @@ setInterval(refreshChart, 30_000)
 // Updates much more slowly than session data; poll every 60 s.
 const $quota = document.getElementById('quota')
 
-function fmtResetIn(ms) {
-  if (ms == null) return ''
-  if (ms <= 0) return 'now'
-  if (ms < 60_000) return Math.floor(ms / 1000) + 's'
-  if (ms < 3_600_000) return Math.floor(ms / 60_000) + 'm'
-  const h = Math.floor(ms / 3_600_000)
-  const m = Math.floor((ms % 3_600_000) / 60_000)
-  return m === 0 ? `${h}h` : `${h}h${m}m`
-}
-
-function severityPct(pct) {
-  if (pct >= 90) return 'crit'
-  if (pct >= 75) return 'warn'
-  return ''
-}
-
-// Length of each rolling window, so we can show how far through the
-// current window we are by TIME — a second, thinner bar under the
-// utilization bar. Compare the two at a glance: if the usage bar is
-// ahead of the time bar you're burning faster than the clock; if it's
-// behind, you have headroom.
-const WINDOW_MS = { '5h': 5 * 3_600_000, '7d': 7 * 24 * 3_600_000 }
-
-function renderQuotaRow(label, period) {
+// One grid row per period: label | usage bar with pace tick | used % |
+// projected % at reset | absolute reset clock + remaining time. Math and
+// formatting live in pace.js (unit-tested). Everything must be readable
+// without hovering — the widget is click-through, tooltips never show.
+function renderQuotaRow(label, period, now) {
   if (!period) return ''
-  const pct = Math.round((period.utilization || 0) * 10) / 10
-  const sev = severityPct(pct)
-
-  const winMs = period.durationMs || WINDOW_MS[label]
-  const resetsInMs = period.resetsAt != null ? Math.max(0, period.resetsAt - Date.now()) : null
-  let timePct = null
-  if (winMs && resetsInMs != null) {
-    timePct = Math.max(0, Math.min(100, (1 - resetsInMs / winMs) * 100))
+  const a = pace.analyzePeriod(period, label, now)
+  const fillPct = Math.min(100, a.util)
+  const tick = a.elapsedFrac == null ? ''
+    : `<span class="qtick" style="left:${(a.elapsedFrac * 100).toFixed(1)}%"></span>`
+  // Hatched extension from the fill to where the current burn would end.
+  const ghost = a.projected == null || a.projected <= a.util ? ''
+    : `<span class="qghost" style="left:${fillPct.toFixed(1)}%;width:${(Math.min(100, a.projected) - fillPct).toFixed(1)}%"></span>`
+  let clock = '—', sub = ''
+  if (a.resetsIn != null) {
+    clock = a.resetsIn < 60_000 ? 'jetzt' : pace.fmtClock(a.resetsAt, now)
+    sub = a.fullAt != null
+      ? `<i class="full">voll ${pace.fmtClock(a.fullAt, now)}</i>`
+      : `<i>${pace.fmtIn(a.resetsIn)}</i>`
   }
-  const timeBar = timePct == null ? '' : `
-      <div class="qtime" title="Zeit im ${escape(label)}-Fenster verstrichen">
-        <span></span>
-        <span class="qtrack"><span class="qtfill" style="width:${timePct.toFixed(1)}%"></span></span>
-        <span class="qtpct">${Math.round(timePct)}%</span>
-        <span class="qtlbl">Zeit</span>
-      </div>`
+  return `<div class="qrow ${a.severity}${a.util === 0 ? ' idle' : ''}">`
+    + `<span class="qlbl">${escape(label)}</span>`
+    + `<span class="qbar"><span class="qcap"><span class="qfill" style="width:${fillPct.toFixed(1)}%"></span>${ghost}</span>${tick}</span>`
+    + `<span class="qpct">${pace.fmtPct(a.util)}</span>`
+    + `<span class="qpace ${a.paceClass}">${pace.fmtProjected(a)}</span>`
+    + `<span class="qreset"><b>${clock}</b>${sub}</span>`
+    + `</div>`
+}
 
-  return `
-    <div class="qgroup ${sev}">
-      <div class="qrow">
-        <span class="qlbl">${escape(label)}</span>
-        <span class="qbar"><span style="width:${Math.max(0, Math.min(100, pct))}%"></span></span>
-        <span class="qpct">${pct}%</span>
-        <span class="qreset" title="${period.resetsAt ? new Date(period.resetsAt).toLocaleString() : ''}">${fmtResetIn(resetsInMs)}</span>
-      </div>${timeBar}
-    </div>
-  `
+// Account block: name column spans all of the account's period rows.
+function renderBlock(name, rows, extra = '', staleNote = '') {
+  const n = Math.max(1, rows.length)
+  return `<div class="qacc"><span class="qname" style="grid-row:span ${n}">${escape(name)}`
+    + (staleNote ? `<small>${staleNote}</small>` : '') + `</span>`
+    + rows.join('') + extra + `</div>`
 }
 
 // Per-account last-good cache. On a transient error (network blip, token
@@ -204,12 +202,10 @@ function renderAccountQuota(name, q) {
   } else {
     lastGood.set(name, q)
   }
-  const staleTag = stale && q.fetchedAt
-    ? `<div class="qstale">stale · ${fmtAgo(Date.now() - q.fetchedAt)} ago</div>` : ''
-  return `<div class="qacc${stale ? ' stale' : ''}">`
-    + `<span class="qname">${escape(name)}</span>`
-    + renderQuotaRow('5h', q.fiveHour) + renderQuotaRow('7d', q.sevenDay)
-    + staleTag + `</div>`
+  const now = Date.now()
+  const rows = [renderQuotaRow('5h', q.fiveHour, now), renderQuotaRow('7d', q.sevenDay, now)].filter(Boolean)
+  const staleNote = stale && q.fetchedAt ? `⟳ ${fmtAgo(now - q.fetchedAt)}` : ''
+  return renderBlock(name, rows, '', staleNote)
 }
 
 async function refreshQuota() {
@@ -255,12 +251,14 @@ async function refreshCodexQuota() {
       codexLastGood = q
     }
     $codexPlan.textContent = q.plan ? `· ${q.plan}` : ''
-    $codexQuota.innerHTML = q.limits.map(limit => `<div class="qacc">`
-      + (q.limits.length > 1 || limit.id !== 'codex' ? `<span class="qname">${escape(limit.name)}</span>` : '')
-      + limit.periods.map(period => renderQuotaRow(period.label, period)).join('')
-      + (limit.unlimited && !limit.periods.length ? '<div class="qnote">Unbegrenztes Kontingent</div>' : '')
-      + '</div>').join('')
-      + (problem ? `<div class="qstale" title="${escape(problem)}">Letzter Stand vor ${fmtAgo(Date.now() - q.fetchedAt)}</div>` : '')
+    const now = Date.now()
+    const staleNote = problem ? `⟳ ${fmtAgo(now - q.fetchedAt)}` : ''
+    $codexQuota.innerHTML = q.limits.map((limit, i) => renderBlock(
+      q.limits.length > 1 || limit.id !== 'codex' ? limit.name : 'Codex',
+      limit.periods.map(period => renderQuotaRow(period.label, period, now)),
+      limit.unlimited && !limit.periods.length ? '<div class="qnote">Unbegrenztes Kontingent</div>' : '',
+      i === 0 ? staleNote : '',
+    )).join('')
   } finally {
     codexBusy = false
     fitHeight()

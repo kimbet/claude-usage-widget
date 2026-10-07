@@ -59,8 +59,10 @@ body {
   body { background-color: rgba(20, 23, 31, 0.94); }
 }
 
+/* Click-through by default (main.js setIgnoreMouseEvents): the header
+   only becomes a drag handle while the user has unlocked the widget via
+   the ⋯ menu; the dashed outline makes that temporary mode obvious. */
 #drag {
-  -webkit-app-region: drag;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -93,7 +95,9 @@ body {
   line-height: 1.3;
   transition: background 120ms ease, color 120ms ease;
 }
-.iconbtn:hover  { color: #fff; background: rgba(255, 255, 255, 0.12); }
+body.unlocked #drag { -webkit-app-region: drag; cursor: move; }
+body.unlocked { border: 1px dashed rgba(196, 181, 253, 0.75); }
+.iconbtn:hover, .iconbtn.hot { color: #fff; background: rgba(255, 255, 255, 0.12); }
 .iconbtn:active { color: #fff; background: rgba(255, 255, 255, 0.20); }
 
 .empty {
@@ -109,32 +113,38 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* One group per period: the utilization row + a time-elapsed line under
-   it, sharing the same column grid so the two bars line up for an
-   at-a-glance compare. (Columns 3/4 are a touch wider than pre-glass so
-   the % / reset pills fit without clipping.) */
-.quota .qgroup { padding: 3px 0; }
-.quota .qrow,
-.quota .qtime {
+/* One account = one grid; each period row is `display: contents`, so
+   its cells sit directly in the account grid and the name cell can span
+   all period rows on the left:
+   name | label | bar (+pace tick) | used % | projected % | reset clock */
+.quota .qacc {
   display: grid;
-  grid-template-columns: 42px 1fr 50px 54px;
+  grid-template-columns: 40px 16px 1fr 40px 40px 56px;
+  column-gap: 6px;
+  row-gap: 3px;
   align-items: center;
-  gap: 7px;
+  padding: 2px 0;
 }
-.quota .qtime { margin-top: 3px; }
+.quota .qrow { display: contents; }
 
 .quota .qlbl {
+  grid-column: 2;
   color: #c4b5fd;
   font-weight: 600;
-  font-size: 12px;
+  font-size: 11px;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
 }
 
-/* Usage bar (headline): a glass capsule. The track is a recessed groove
-   (inset shadow), the fill carries its own top shine so it reads as a
-   lit liquid inside the capsule. */
+/* Usage bar: glass capsule (.qcap clips fill + ghost) inside a positioned
+   wrapper so the pace tick can poke out above and below the capsule. */
 .quota .qbar {
-  height: 7px;
+  grid-column: 3;
+  position: relative;
+  height: 8px;
+}
+.quota .qcap {
+  position: absolute;
+  inset: 0;
   background: rgba(255, 255, 255, 0.10);
   border-radius: 999px;
   overflow: hidden;
@@ -142,9 +152,9 @@ body {
     inset 0 1px 2px rgba(0, 0, 0, 0.40),
     inset 0 -0.5px 0 rgba(255, 255, 255, 0.07);
 }
-.quota .qbar > span {
-  display: block;
-  height: 100%;
+.quota .qfill {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
   border-radius: inherit;
   /* layer 1: specular shine, layer 2: the severity hue */
   background:
@@ -152,83 +162,93 @@ body {
     linear-gradient(to right, #34d399, #60a5fa);
   transition: width 250ms ease;
 }
-.quota .qgroup.warn .qbar > span {
+.quota .qrow.warn .qfill {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0.05) 55%, rgba(0, 0, 0, 0.10)),
     linear-gradient(to right, #fbbf24, #f87171);
 }
-.quota .qgroup.crit .qbar > span {
+.quota .qrow.crit .qfill {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0.05) 55%, rgba(0, 0, 0, 0.10)),
     linear-gradient(to right, #f87171, #ef4444);
 }
+/* Where the current burn would end at reset: hatched, faint. */
+.quota .qghost {
+  position: absolute;
+  top: 0; bottom: 0;
+  background: repeating-linear-gradient(135deg,
+    rgba(96, 165, 250, 0.35) 0 2px, transparent 2px 4px);
+}
+.quota .qrow.warn .qghost {
+  background: repeating-linear-gradient(135deg, rgba(251, 191, 36, 0.45) 0 2px, transparent 2px 4px);
+}
+.quota .qrow.crit .qghost {
+  background: repeating-linear-gradient(135deg, rgba(248, 113, 113, 0.50) 0 2px, transparent 2px 4px);
+}
+/* Pace tick: how much of the window's time has passed. Fill right of
+   the tick = burning faster than the clock; left = headroom. */
+.quota .qtick {
+  position: absolute;
+  top: -3px; bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.85);
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.6);
+}
 
-/* Numbers on the right, as small glass pills — the values that matter,
-   so keep them white and give them their own little pane to sit on. */
 .quota .qpct {
+  grid-column: 4;
   justify-self: end;
   color: #ffffff;
   font-size: 13px;
   font-weight: 700;
   letter-spacing: -0.02em;
   text-align: right;
-  padding: 1px 7px;
+  padding: 0 6px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.10);
   border: 1px solid rgba(255, 255, 255, 0.14);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15), 0 1px 2px rgba(0, 0, 0, 0.25);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
 }
-.quota .qgroup.warn .qpct {
+.quota .qrow.warn .qpct {
   background: rgba(251, 191, 36, 0.14);
   border-color: rgba(251, 191, 36, 0.38);
 }
-.quota .qgroup.crit .qpct {
+.quota .qrow.crit .qpct {
   background: rgba(239, 68, 68, 0.20);
   border-color: rgba(248, 113, 113, 0.45);
 }
-.quota .qreset {
+.quota .qrow.idle .qpct { color: #9aa3b2; font-weight: 600; }
+
+/* Projected utilization at reset, coloured on its own: the fill can
+   still be green while the pace already says "won't make it". */
+.quota .qpace {
+  grid-column: 5;
   justify-self: end;
-  color: #e2e6ee;
   font-size: 10px;
   font-weight: 600;
-  text-align: right;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.07);
-  border: 1px solid rgba(255, 255, 255, 0.10);
-}
-
-/* Time-elapsed line: thinner capsule in neutral grey, so it reads as
-   "the clock", distinct from the coloured usage bar right above it. */
-.quota .qtrack {
-  height: 3px;
-  background: rgba(255, 255, 255, 0.07);
-  border-radius: 999px;
-  overflow: hidden;
-  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.35);
-}
-.quota .qtrack > .qtfill {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: #8b93a7;
-  transition: width 250ms ease;
-}
-.quota .qtpct {
-  color: #9aa3b2;
-  font-size: 10px;
-  text-align: right;
-  padding-right: 8px; /* optically align with the pill text above */
-}
-.quota .qtlbl {
   color: #7f8798;
-  font-size: 8px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  text-align: right;
-  padding-right: 7px;
 }
+.quota .qpace.good { color: #6ee7b7; }
+.quota .qpace.even { color: #aab2c0; }
+.quota .qpace.warn { color: #fbbf24; }
+.quota .qpace.crit { color: #f87171; }
+
+/* Reset: absolute clock on top, remaining time (or "voll HH:MM" when
+   the current burn hits 100% first) below — two 9px lines, one row. */
+.quota .qreset {
+  grid-column: 6;
+  justify-self: end;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.15;
+}
+.quota .qreset b { color: #e2e6ee; font-size: 10px; font-weight: 600; }
+.quota .qreset i { color: #8b93a4; font-size: 9px; font-style: normal; }
+.quota .qreset i.full { color: #f87171; font-weight: 600; }
 
 .quota .err {
   color: #f87171;
@@ -238,35 +258,38 @@ body {
 
 /* Multi-account: one block per logged-in account, separated by an
    etched glass groove (dark line over light line). */
-.quota .qacc { padding: 2px 0; }
 .quota .qacc + .qacc {
   border-top: 1px solid rgba(255, 255, 255, 0.09);
   box-shadow: 0 -1px 0 rgba(0, 0, 0, 0.30);
-  margin-top: 5px;
-  padding-top: 5px;
+  margin-top: 3px;
+  padding-top: 4px;
 }
 .quota .qname {
-  display: block;
+  grid-column: 1;
+  align-self: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: #a78bfa;
   font-weight: 700;
   font-size: 9px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  margin-bottom: 2px;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
 }
-.quota .qacc.err .qname { color: #f87171; }
-
-/* Stale: last good read is shown because the latest fetch failed. The
-   panel is already hard to read, so DON'T dim it — keep every number at
-   full contrast and just flag it with an amber note instead. */
-.quota .qstale {
+/* Stale: last good read shown because the latest fetch failed. Numbers
+   keep full contrast; only an amber "⟳ 12m" under the name flags it. */
+.quota .qname small {
+  display: block;
   color: #fbbf24;
   font-size: 9px;
-  font-style: italic;
-  text-align: right;
-  margin-top: 1px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
 }
+.quota .qacc.err { grid-template-columns: 40px 1fr; }
+.quota .qacc.err .qname { color: #f87171; }
+.quota .qnote { grid-column: 2 / -1; }
 
 .provider-title {
   padding: 7px 10px 0;
@@ -281,44 +304,37 @@ body {
 }
 #codex-plan { color: #9ca3af; font-weight: 400; }
 #codex-quota .qlbl, #codex-quota .qname { color: #6ee7b7; }
+#codex-quota .qname small { color: #fbbf24; }
 .qnote { color: #9ca3af; font-size: 10px; }
 
-/* ---- Throughput chart ---- */
-/* Container only (the SVG itself is untouched): a slightly darker,
-   recessed glass tray so the sparkline keeps contrast on the pane. */
-#chart-wrap {
+/* ---- Footer: throughput sparkline + absolute numbers ---- */
+/* Recessed glass tray: sparkline left, two lines of numbers right. */
+#foot {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 10px;
+  align-items: center;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(8, 10, 16, 0.28);
   box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.20);
-  padding: 5px 8px 6px;
+  border-radius: 0 0 13px 13px;
+  padding: 5px 12px 6px 10px;
 }
-#chart-wrap .chart-head {
-  display: flex;
-  justify-content: space-between;
-  font-size: 9px;
+#foot .fstats {
+  font-size: 10px;
+  line-height: 1.35;
   color: #8b93a4;
-  letter-spacing: 0.4px;
-  margin-bottom: 2px;
-  text-transform: uppercase;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
-#chart-wrap .peak { color: #aab2c0; }
+#foot .fstats b { color: #e2e6ee; font-weight: 600; }
 #chart {
   width: 100%;
-  height: 40px;
+  height: 24px;
   display: block;
 }
 #chart .area  { fill: url(#chart-grad); opacity: 0.35; }
 #chart .line  { fill: none; stroke: #60a5fa; stroke-width: 1; vector-effect: non-scaling-stroke; }
 #chart .axis  { stroke: rgba(255,255,255,0.05); stroke-width: 1; vector-effect: non-scaling-stroke; }
 #chart .now   { stroke: #34d399; stroke-width: 1; vector-effect: non-scaling-stroke; stroke-dasharray: 2 2; opacity: 0.6; }
-
-#totals {
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.15);
-  padding: 5px 12px 6px;
-  font-size: 10px;
-  color: #aab2c0;
-  font-variant-numeric: tabular-nums;
-  display: flex;
-  justify-content: space-between;
-}
