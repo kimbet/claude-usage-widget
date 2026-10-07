@@ -13,37 +13,28 @@ $menu.addEventListener('click', () => {
   window.widget.openContextMenu()
 })
 
-// Click-through: main forwards mousemove while ignoring clicks, so track
-// whether the pointer is over the title bar (drag handle + ⋯) and tell
-// main only on change. mousemove (not mouseenter) because after the
-// native menu closes the pointer may already sit on the bar without a
-// fresh enter event. Leaving the bar is detected by main (drag regions
-// swallow DOM mouse events on Windows) and reported via menu-closed.
+// Click-through: main decides when the title bar takes the mouse (it
+// polls the cursor against the bar's height) and tells us for the hover
+// look. The rest of the panel never takes clicks.
 const $drag = document.getElementById('drag')
+window.widget.headerHeight($drag.getBoundingClientRect().bottom)
 let overHeader = false
-function setOverHeader(over) {
-  if (over === overHeader) return
-  overHeader = over
-  $drag.classList.toggle('hot', over)
-  window.widget.headerHover(over, $drag.getBoundingClientRect().bottom)
-}
+window.widget.onHeaderHot(on => {
+  overHeader = on
+  $drag.classList.toggle('hot', on)
+  if (on) document.body.classList.remove('peek')
+})
 
 // See-through spotlight: around the pointer the panel fades out, so the
 // click target underneath is visible. Off over the title bar (that one
 // takes the click) and while unlocked for resizing.
 const rootStyle = document.documentElement.style
 document.addEventListener('mousemove', e => {
-  const over = !!e.target.closest('#drag')
-  setOverHeader(over)
   rootStyle.setProperty('--mx', e.clientX + 'px')
   rootStyle.setProperty('--my', e.clientY + 'px')
-  document.body.classList.toggle('peek', !over)
+  document.body.classList.toggle('peek', !overHeader && !e.target.closest('#drag'))
 })
-document.addEventListener('mouseleave', () => {
-  setOverHeader(false)
-  document.body.classList.remove('peek')
-})
-window.widget.onMenuClosed(() => { overHeader = false; $drag.classList.remove('hot') })
+document.addEventListener('mouseleave', () => document.body.classList.remove('peek'))
 window.widget.onUnlocked(on => document.body.classList.toggle('unlocked', on))
 
 // Format integers as "1.2k", "12.4k", "1.2M".

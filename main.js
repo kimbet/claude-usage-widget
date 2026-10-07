@@ -78,6 +78,7 @@ function createWindow() {
   // widget. `forward` keeps mousemove flowing to the renderer so it can
   // flip hit-testing on while the pointer is over the title bar.
   setClickThrough(true)
+  startHeaderPoll()
 
   const persist = () => {
     if (!win || win.isDestroyed()) return
@@ -91,13 +92,16 @@ function createWindow() {
 }
 
 // Two independent reasons to accept mouse input: the pointer is over the
-// title bar (drag handle + ⋯ button; renderer reports entry and the bar's
-// height), or the user unlocked the widget via the menu to resize it.
-// Everything else passes through.
+// title bar (drag handle + ⋯ button), or the user unlocked the widget via
+// the menu to resize it. Everything else passes through.
+//
+// Hover over the bar is detected here by polling the cursor, not by page
+// events: while the window ignores the mouse, Windows delivers nothing for
+// the drag region to the page, so the page could never switch it on.
 let overHeader = false
-let headerH = 0
-let headerPoll = null
+let headerH = 32      // renderer reports the real height on load
 let unlocked = false
+let headerPoll = null
 function setClickThrough(on) {
   if (!win || win.isDestroyed()) return
   if (on) win.setIgnoreMouseEvents(true, { forward: true })
@@ -106,32 +110,21 @@ function setClickThrough(on) {
 function applyMouseMode() {
   setClickThrough(!(overHeader || unlocked))
 }
-// Windows treats the drag region as non-client area: the page sees no
-// mousemove/mouseleave there, so it can't tell us when the pointer leaves
-// the bar upward or sideways. While the bar is "hot", main checks the
-// cursor itself and drops back to click-through once it is outside.
-function setOverHeader(over) {
-  overHeader = over
-  clearInterval(headerPoll)
-  headerPoll = null
-  if (over) {
-    headerPoll = setInterval(() => {
-      if (!win || win.isDestroyed()) return setOverHeader(false)
-      const p = screen.getCursorScreenPoint()
-      const b = win.getBounds()
-      const inside = p.x >= b.x && p.x < b.x + b.width && p.y >= b.y && p.y < b.y + headerH
-      if (!inside) {
-        setOverHeader(false)
-        win.webContents.send('menu-closed')
-      }
-    }, 100)
-  }
+function pollHeader() {
+  if (!win || win.isDestroyed() || !win.isVisible()) return
+  const p = screen.getCursorScreenPoint()
+  const b = win.getBounds()
+  const inside = p.x >= b.x && p.x < b.x + b.width && p.y >= b.y && p.y < b.y + headerH
+  if (inside === overHeader) return
+  overHeader = inside
   applyMouseMode()
+  win.webContents.send('header-hot', inside)
 }
-ipcMain.on('header-hover', (e, over, height) => {
-  if (height) headerH = height
-  if (over !== overHeader) setOverHeader(!!over)
-})
+function startHeaderPoll() {
+  clearInterval(headerPoll)
+  headerPoll = setInterval(pollHeader, 50)
+}
+ipcMain.on('header-height', (e, h) => { if (h > 0) headerH = Math.ceil(h) })
 function setUnlocked(on) {
   unlocked = on
   applyMouseMode()
@@ -159,10 +152,7 @@ function showContextMenu() {
     // The pointer usually leaves the button while the native menu is
     // open; the renderer can't see that, so drop back to click-through
     // and let the next mousemove over the button re-arm it.
-    callback: () => {
-      setOverHeader(false)
-      win?.webContents.send('menu-closed')
-    },
+    callback: () => pollHeader(),
   })
 }
 ipcMain.on('context-menu', showContextMenu)
@@ -179,5 +169,5 @@ ipcMain.on('resize-content', (e, h) => {
 })
 
 app.whenReady().then(createWindow)
-app.on('before-quit', () => codexQuota.dispose())
+app.on('before-quit', () => { clearInterval(headerPoll); codexQuota.dispose() })
 app.on('window-all-closed', () => app.quit())
