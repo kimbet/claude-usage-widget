@@ -14,19 +14,36 @@ $menu.addEventListener('click', () => {
 })
 
 // Click-through: main forwards mousemove while ignoring clicks, so track
-// whether the pointer is over the ⋯ button and tell main only on change.
-// mousemove (not mouseenter) because after the native menu closes the
-// pointer may already sit on the button without a fresh enter event.
-let overMenu = false
-function setOverMenu(over) {
-  if (over === overMenu) return
-  overMenu = over
-  $menu.classList.toggle('hot', over)
-  window.widget.menuHover(over)
+// whether the pointer is over the title bar (drag handle + ⋯) and tell
+// main only on change. mousemove (not mouseenter) because after the
+// native menu closes the pointer may already sit on the bar without a
+// fresh enter event. Leaving the bar is detected by main (drag regions
+// swallow DOM mouse events on Windows) and reported via menu-closed.
+const $drag = document.getElementById('drag')
+let overHeader = false
+function setOverHeader(over) {
+  if (over === overHeader) return
+  overHeader = over
+  $drag.classList.toggle('hot', over)
+  window.widget.headerHover(over, $drag.getBoundingClientRect().bottom)
 }
-document.addEventListener('mousemove', e => setOverMenu(!!e.target.closest('#menu')))
-document.addEventListener('mouseleave', () => setOverMenu(false))
-window.widget.onMenuClosed(() => { overMenu = false; $menu.classList.remove('hot') })
+
+// See-through spotlight: around the pointer the panel fades out, so the
+// click target underneath is visible. Off over the title bar (that one
+// takes the click) and while unlocked for resizing.
+const rootStyle = document.documentElement.style
+document.addEventListener('mousemove', e => {
+  const over = !!e.target.closest('#drag')
+  setOverHeader(over)
+  rootStyle.setProperty('--mx', e.clientX + 'px')
+  rootStyle.setProperty('--my', e.clientY + 'px')
+  document.body.classList.toggle('peek', !over)
+})
+document.addEventListener('mouseleave', () => {
+  setOverHeader(false)
+  document.body.classList.remove('peek')
+})
+window.widget.onMenuClosed(() => { overHeader = false; $drag.classList.remove('hot') })
 window.widget.onUnlocked(on => document.body.classList.toggle('unlocked', on))
 
 // Format integers as "1.2k", "12.4k", "1.2M".

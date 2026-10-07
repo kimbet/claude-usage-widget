@@ -19,8 +19,8 @@ contextBridge.exposeInMainWorld('widget', {
   fetchCodexQuota: () => ipcRenderer.invoke('codex-quota'),
   openContextMenu: () => ipcRenderer.send('context-menu'),
   // Click-through control: main ignores mouse input except while the
-  // pointer is over the ⋯ button or the widget is unlocked for moving.
-  menuHover: (over) => ipcRenderer.send('menu-hover', over),
+  // pointer is over the title bar or the widget is unlocked for resizing.
+  headerHover: (over, height) => ipcRenderer.send('header-hover', over, height),
   onMenuClosed: (cb) => ipcRenderer.on('menu-closed', () => cb()),
   onUnlocked: (cb) => ipcRenderer.on('unlocked', (e, on) => cb(on)),
   // Fit the window height to the rendered content.
