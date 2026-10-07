@@ -1,49 +1,59 @@
 # claude-usage-widget
 
-Always-on-top floating widget for Windows that shows live status,
-context utilisation and 15-minute throughput of every active Claude
-Code session on the machine.
+Always-on-top floating widget for Windows showing Claude Code and Codex
+subscription usage. Each provider has its own quota bars and reset countdowns.
+Claude's local token activity is also shown in the chart and daily totals.
 
 ```
-┌─ Claude Code Usage ─────────────┐
-│ ● wine        busy              │
-│   ████████░░  195k / 1M  (20%)  │
-│   17.2k tok/min · last 15m      │
-│                                 │
-│ ● around      idle 3m           │
-│   █░░░░░░░░░  89k / 1M   (9%)   │
-│   0 tok/min                     │
-│                                 │
-│ Today: 2.8M tok      220 msg    │
-└─────────────────────────────────┘
+┌─ Claude + Codex ────────────────┐
+│ Claude Code · haupt            │
+│ 5h  █████░░░░░  50%     2h30m  │
+│ 7d  ██░░░░░░░░  20%      110h  │
+│ Codex · pro                    │
+│ 5h  ███░░░░░░░  30%       4h  │
+│ 7d  █░░░░░░░░░  10%      120h  │
+│ Claude · last 4h               │
+│ Claude today: 2.8M     220 msg  │
+└────────────────────────────────┘
 ```
 
 ## What it shows
 
-- **One row per active session.** "Active" = the CLI's process is
-  still alive and the registry file in `~/.claude/sessions/<pid>.json`
-  has been updated within the last 10 minutes.
-- **busy / idle** indicator — green dot busy, amber dot idle (with
-  age since last heartbeat).
-- **Context bar + percentage** — `input + cache_read + cache_creation`
-  of the most recent assistant message in the session's JSONL,
-  divided by the model's known context limit. Bar tints amber at
-  ≥70% and red at ≥90%.
-- **Tokens per minute over the last 15 minutes** — "new work" only
-  (input + output + cache_creation, **not** cache_read), because
-  cache_read replays of the conversation dominate raw counts by
-  10–100× and make every session look like 600k tok/min.
-- **Subscription quota** — live 5-hour and 7-day window utilisation
+- **Claude subscription quota** — live 5-hour and 7-day window utilisation
   with reset countdown, fetched once a minute from Anthropic's
   `/api/oauth/usage` endpoint (same source as Claude Code's `/usage`
   slash command). Auth via the OAuth token in
-  `~/.claude/.credentials.json`; nothing else leaves the machine.
+  each configured account's `.credentials.json`. Account configuration is
+  read from `C:\repos\IP-Tagebuch\config\accounts.json`, with `~/.claude`
+  as the fallback.
+- **Codex subscription quota** — consumed percentage, reset countdown and
+  elapsed-time bar, refreshed independently every minute. The window lengths
+  and additional limit groups come from Codex, rather than assuming 5h/7d.
+  Missing login/limits are shown explicitly. Transient failures retain the
+  last successful values with a visible stale notice.
 - **4-hour throughput sparkline** — tokens-per-minute in 5-min
   buckets across every project. Y-axis capped at the 95th-percentile
   rate so a single session-start cache_creation spike doesn't
   flatten the rest of the chart.
-- **Today totals** — same "new work" definition, summed across
-  every project's JSONL, from local-time midnight.
+- **Claude today totals** — input + output + cache creation (excluding cache
+  reads), summed across every project's JSONL from local-time midnight.
+
+## Codex setup
+
+The Codex CLI must be installed and signed in with the ChatGPT account whose
+subscription limits you want to see. The widget uses the existing Codex login
+(and `CODEX_HOME` if set); it does not request a separate API key. API-key-only
+accounts do not expose ChatGPT subscription limits.
+
+Windows npm installations and native executables on PATH are detected.
+For a different installation, set `CODEX_BIN` to the native Codex executable's
+absolute path before launching the widget.
+
+Each refresh starts a hidden, short-lived `codex app-server --listen stdio://`
+process and calls only `initialize`, `account/read` and `account/rateLimits/read`.
+The process is stopped after the result or a 25-second timeout, and on widget
+exit. It opens no chat and sends no model request. Existing Codex sessions are
+not stopped. Protocol: [official app-server documentation](https://learn.chatgpt.com/docs/app-server).
 
 ## Run
 
@@ -98,8 +108,8 @@ To disable autostart later, delete
 
 ## Sharing with a friend
 
-The widget only reads local files under `~/.claude/`. It works on any
-machine that has Claude Code installed and Node.js 22+.
+Claude activity comes from the local Claude profile. Claude Code and Node.js
+22+ are required; install and sign into Codex to enable the Codex section.
 
 For a friend on Windows:
 
@@ -119,7 +129,7 @@ too, though the path-mangling convention (see `mangleCwd` in
 `src/parser.js`) was verified on Windows only — adjust if Claude Code's
 folder layout differs on those OSes.
 
-## Data sources (read-only)
+## Data sources
 
 - `~/.claude/sessions/<pid>.json` — Claude Code's live process
   registry. Has `pid`, `sessionId`, `cwd`, `status` (`"busy"`/`"idle"`),
@@ -133,8 +143,13 @@ folder layout differs on those OSes.
   (same endpoint Claude Code's own `/usage` command hits). The
   response carries the 5-hour and 7-day window utilisation.
 
-Apart from the once-per-minute call to `api.anthropic.com`, nothing
-leaves the machine. No telemetry.
+- Codex's local app-server reads the current account and fetches its limits
+  from OpenAI. Credentials are managed by Codex and never passed to the
+  widget renderer. Only normalized quota data reaches the display.
+
+The widget fetches provider quotas once per minute. Claude OAuth credentials
+may be renewed and saved by `quota.js`; Codex handles its own authentication.
+Local conversation contents are not uploaded by the widget.
 
 ## Architecture
 
@@ -150,6 +165,8 @@ leaves the machine. No telemetry.
 - `src/quota.js` — Anthropic OAuth usage endpoint client. Reads the
   CC OAuth token, calls `/api/oauth/usage`, flattens the response
   into `fiveHour` / `sevenDay` / etc.
+- `src/codex-quota.js` — Codex app-server client, run in the main process.
+  Resolves the installed executable, fetches limits and disposes its child.
 - `src/renderer.js` — polls `window.widget.scan()` every 2 seconds
   and re-renders the DOM. No virtual DOM, no framework; the data
   volume is tiny.

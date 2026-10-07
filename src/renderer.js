@@ -1,8 +1,5 @@
-// Renderer. Polls window.widget.scan() every 2s, renders DOM from the
-// returned snapshot. Stays dumb on purpose: no caching, no animation
-// logic beyond CSS, no event coalescing. Performance is fine because
-// the snapshot is tiny (~N sessions × ~10 numbers) and parser.js does
-// the heavy lifting once per tick.
+// Local Claude activity every 2s; independent Claude/Codex quota requests
+// every minute. A slow provider never delays the other provider's display.
 
 const $totals   = document.getElementById('totals')
 const $scanned  = document.getElementById('scanned')
@@ -41,7 +38,7 @@ async function refresh() {
 
   const t = snap.totals
   $totals.innerHTML = `
-    <span>Today: ${fmtTokens(t.tokens)}</span>
+    <span>Claude today: ${fmtTokens(t.tokens)}</span>
     <span>${t.messages} msg</span>
   `
   fitHeight()
@@ -165,16 +162,17 @@ const WINDOW_MS = { '5h': 5 * 3_600_000, '7d': 7 * 24 * 3_600_000 }
 
 function renderQuotaRow(label, period) {
   if (!period) return ''
-  const pct = period.utilization || 0
+  const pct = Math.round((period.utilization || 0) * 10) / 10
   const sev = severityPct(pct)
 
-  const winMs = WINDOW_MS[label]
+  const winMs = period.durationMs || WINDOW_MS[label]
+  const resetsInMs = period.resetsAt != null ? Math.max(0, period.resetsAt - Date.now()) : null
   let timePct = null
-  if (winMs && period.resetsInMs != null) {
-    timePct = Math.max(0, Math.min(100, (1 - period.resetsInMs / winMs) * 100))
+  if (winMs && resetsInMs != null) {
+    timePct = Math.max(0, Math.min(100, (1 - resetsInMs / winMs) * 100))
   }
   const timeBar = timePct == null ? '' : `
-      <div class="qtime" title="Zeit im ${label}-Fenster verstrichen">
+      <div class="qtime" title="Zeit im ${escape(label)}-Fenster verstrichen">
         <span></span>
         <span class="qtrack"><span class="qtfill" style="width:${timePct.toFixed(1)}%"></span></span>
         <span class="qtpct">${Math.round(timePct)}%</span>
@@ -184,10 +182,10 @@ function renderQuotaRow(label, period) {
   return `
     <div class="qgroup ${sev}">
       <div class="qrow">
-        <span class="qlbl">${label}</span>
-        <span class="qbar"><span style="width:${Math.min(100, pct)}%"></span></span>
+        <span class="qlbl">${escape(label)}</span>
+        <span class="qbar"><span style="width:${Math.max(0, Math.min(100, pct))}%"></span></span>
         <span class="qpct">${pct}%</span>
-        <span class="qreset" title="${period.resetsAt ? new Date(period.resetsAt).toLocaleString() : ''}">${fmtResetIn(period.resetsInMs)}</span>
+        <span class="qreset" title="${period.resetsAt ? new Date(period.resetsAt).toLocaleString() : ''}">${fmtResetIn(resetsInMs)}</span>
       </div>${timeBar}
     </div>
   `
@@ -234,3 +232,44 @@ async function refreshQuota() {
 }
 refreshQuota()
 setInterval(refreshQuota, 60_000)
+
+// Keep Codex separate from Claude's account names and last-good values.
+const $codexQuota = document.getElementById('codex-quota')
+const $codexPlan = document.getElementById('codex-plan')
+let codexBusy = false
+let codexLastGood = null
+
+async function refreshCodexQuota() {
+  if (codexBusy) return
+  codexBusy = true
+  try {
+    let q
+    try { q = await window.widget.fetchCodexQuota() }
+    catch { q = { error: 'connection', message: 'Codex-Nutzung konnte nicht abgerufen werden.' } }
+    const problem = q.error ? q.message : null
+    if (q.error) {
+      // After logout or an incompatible account, never retain another account's limits.
+      if (['auth', 'unavailable', 'missing_cli'].includes(q.error)) codexLastGood = null
+      if (!codexLastGood) {
+        $codexPlan.textContent = ''
+        $codexQuota.innerHTML = `<div class="err">${escape(problem || 'Keine Daten')}</div>`
+        return
+      }
+      q = codexLastGood
+    } else {
+      codexLastGood = q
+    }
+    $codexPlan.textContent = q.plan ? `· ${q.plan}` : ''
+    $codexQuota.innerHTML = q.limits.map(limit => `<div class="qacc">`
+      + (q.limits.length > 1 || limit.id !== 'codex' ? `<span class="qname">${escape(limit.name)}</span>` : '')
+      + limit.periods.map(period => renderQuotaRow(period.label, period)).join('')
+      + (limit.unlimited && !limit.periods.length ? '<div class="qnote">Unbegrenztes Kontingent</div>' : '')
+      + '</div>').join('')
+      + (problem ? `<div class="qstale" title="${escape(problem)}">Letzter Stand vor ${fmtAgo(Date.now() - q.fetchedAt)}</div>` : '')
+  } finally {
+    codexBusy = false
+    fitHeight()
+  }
+}
+refreshCodexQuota()
+setInterval(refreshCodexQuota, 60_000)

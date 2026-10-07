@@ -17,6 +17,8 @@ contextBridge.exposeInMainWorld('widget', {
   fetchQuota: () => quota.fetchQuota(),
   // Multi-account: { accounts: [{ name, quota }], fetchedAt }
   fetchAllQuota: () => quota.fetchAllQuota(),
+  // Codex subscription limits; only normalized usage reaches the renderer.
+  fetchCodexQuota: () => ipcRenderer.invoke('codex-quota'),
   openContextMenu: () => ipcRenderer.send('context-menu'),
   // Fit the window height to the rendered content.
   resizeContent: (h) => ipcRenderer.send('resize-content', h),

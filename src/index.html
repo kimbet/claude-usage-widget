@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Claude Usage</title>
+  <title>Claude + Codex Usage</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -10,24 +10,30 @@
        makes the whole bar grab-and-move; the close button overrides
        it back to a clickable area so dragging doesn't swallow it. -->
   <header id="drag">
-    <span class="title">Claude Code</span>
+    <span class="title">Claude + Codex</span>
     <span class="scanned" id="scanned">—</span>
     <button class="iconbtn" id="menu" title="Menu">⋯</button>
   </header>
 
-  <section id="quota" title="Subscription quota — live from api.anthropic.com/api/oauth/usage">
+  <div class="provider-title">Claude Code</div>
+  <section id="quota" class="quota" title="Claude: verbrauchtes Kontingent und Zeit bis zur Rücksetzung">
     <div class="empty">—</div>
   </section>
 
-  <section id="chart-wrap" title="Throughput — new work per minute, last 4h in 5-min buckets">
+  <div class="provider-title codex-title">Codex <span id="codex-plan"></span></div>
+  <section id="codex-quota" class="quota" title="Codex: verbrauchtes Kontingent und Zeit bis zur Rücksetzung">
+    <div class="empty">Wird geladen …</div>
+  </section>
+
+  <section id="chart-wrap" title="Claude throughput — new work per minute, last 4h in 5-min buckets">
     <div class="chart-head">
-      <span class="lbl">last 4h</span>
+      <span class="lbl">Claude · last 4h</span>
       <span class="peak" id="chart-peak">peak —</span>
     </div>
     <svg id="chart" viewBox="0 0 200 40" preserveAspectRatio="none"></svg>
   </section>
 
-  <footer id="totals">Today: — · — msg</footer>
+  <footer id="totals">Claude today: — · — msg</footer>
 
   <script src="renderer.js"></script>
 </body>

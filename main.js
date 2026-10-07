@@ -1,12 +1,13 @@
 // Electron main process. One frameless always-on-top BrowserWindow.
 // Window position and size are persisted to ~/.claude-usage-widget.json
-// so the user's manual placement survives restarts. Everything else
-// (data parsing, rendering) lives in the renderer — see src/.
+// so the user's manual placement survives restarts. The Codex quota child
+// belongs to this process; the UI and Claude data bridge live in src/.
 
 const { app, BrowserWindow, ipcMain, screen, Menu } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 const os = require('node:os')
+const codexQuota = require('./src/codex-quota.js')
 
 const STATE_PATH = path.join(os.homedir(), '.claude-usage-widget.json')
 const ICON_PATH = path.join(__dirname, 'assets', 'icon.ico')
@@ -94,6 +95,7 @@ function showContextMenu() {
   menu.popup({ window: win })
 }
 ipcMain.on('context-menu', showContextMenu)
+ipcMain.handle('codex-quota', () => codexQuota.fetchCodexQuota())
 
 // Fit window height to rendered content. Width and position stay as the
 // user placed them; only the height tracks the content so the panel has
@@ -106,4 +108,5 @@ ipcMain.on('resize-content', (e, h) => {
 })
 
 app.whenReady().then(createWindow)
+app.on('before-quit', () => codexQuota.dispose())
 app.on('window-all-closed', () => app.quit())

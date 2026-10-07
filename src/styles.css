@@ -67,7 +67,7 @@ body {
 }
 
 /* ---- Subscription quota (5h / 7d, per account) — the main panel ---- */
-#quota {
+.quota {
   padding: 8px 10px 6px;
   font-variant-numeric: tabular-nums;
 }
@@ -75,44 +75,44 @@ body {
 /* One group per period: the utilization row + a time-elapsed line under
    it, sharing the same column grid so the two bars line up for an
    at-a-glance compare. */
-#quota .qgroup { padding: 3px 0; }
-#quota .qrow,
-#quota .qtime {
+.quota .qgroup { padding: 3px 0; }
+.quota .qrow,
+.quota .qtime {
   display: grid;
-  grid-template-columns: 28px 1fr 44px 52px;
+  grid-template-columns: 42px 1fr 44px 52px;
   align-items: center;
   gap: 7px;
 }
-#quota .qtime { margin-top: 3px; }
+.quota .qtime { margin-top: 3px; }
 
-#quota .qlbl { color: #c4b5fd; font-weight: 600; font-size: 12px; }
+.quota .qlbl { color: #c4b5fd; font-weight: 600; font-size: 12px; }
 
 /* Usage bar (headline). */
-#quota .qbar {
+.quota .qbar {
   height: 6px;
   background: rgba(255, 255, 255, 0.08);
   border-radius: 3px;
   overflow: hidden;
 }
-#quota .qbar > span {
+.quota .qbar > span {
   display: block;
   height: 100%;
   background: linear-gradient(to right, #34d399, #60a5fa);
   transition: width 250ms ease;
 }
-#quota .qgroup.warn .qbar > span { background: linear-gradient(to right, #fbbf24, #f87171); }
-#quota .qgroup.crit .qbar > span { background: linear-gradient(to right, #f87171, #ef4444); }
+.quota .qgroup.warn .qbar > span { background: linear-gradient(to right, #fbbf24, #f87171); }
+.quota .qgroup.crit .qbar > span { background: linear-gradient(to right, #f87171, #ef4444); }
 
 /* Numbers on the right — the values that matter, so make them big and
    high-contrast (this panel is small and dim). */
-#quota .qpct {
+.quota .qpct {
   color: #ffffff;
   font-size: 15px;
   font-weight: 700;
   text-align: right;
   letter-spacing: -0.02em;
 }
-#quota .qreset {
+.quota .qreset {
   color: #d7dbe3;
   font-size: 11px;
   font-weight: 500;
@@ -121,24 +121,24 @@ body {
 
 /* Time-elapsed line: thinner and neutral-coloured, so it reads as "the
    clock", distinct from the coloured usage bar right above it. */
-#quota .qtrack {
+.quota .qtrack {
   height: 3px;
   background: rgba(255, 255, 255, 0.05);
   border-radius: 2px;
   overflow: hidden;
 }
-#quota .qtrack > .qtfill {
+.quota .qtrack > .qtfill {
   display: block;
   height: 100%;
   background: #8b93a7;
   transition: width 250ms ease;
 }
-#quota .qtpct {
+.quota .qtpct {
   color: #9aa3b2;
   font-size: 10px;
   text-align: right;
 }
-#quota .qtlbl {
+.quota .qtlbl {
   color: #6b7280;
   font-size: 8px;
   text-transform: uppercase;
@@ -146,20 +146,20 @@ body {
   text-align: right;
 }
 
-#quota .err {
+.quota .err {
   color: #f87171;
   font-size: 10px;
   font-style: italic;
 }
 
 /* Multi-account: one block per logged-in account, name label on top. */
-#quota .qacc { padding: 2px 0; }
-#quota .qacc + .qacc {
+.quota .qacc { padding: 2px 0; }
+.quota .qacc + .qacc {
   border-top: 1px solid rgba(255, 255, 255, 0.05);
   margin-top: 4px;
   padding-top: 4px;
 }
-#quota .qname {
+.quota .qname {
   display: block;
   color: #a78bfa;
   font-weight: 700;
@@ -168,18 +168,33 @@ body {
   letter-spacing: 0.05em;
   margin-bottom: 2px;
 }
-#quota .qacc.err .qname { color: #f87171; }
+.quota .qacc.err .qname { color: #f87171; }
 
 /* Stale: last good read is shown because the latest fetch failed. The
    panel is already hard to read, so DON'T dim it — keep every number at
    full contrast and just flag it with an amber note instead. */
-#quota .qstale {
+.quota .qstale {
   color: #fbbf24;
   font-size: 9px;
   font-style: italic;
   text-align: right;
   margin-top: 1px;
 }
+
+.provider-title {
+  padding: 7px 10px 0;
+  color: #c4b5fd;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.codex-title {
+  color: #6ee7b7;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+#codex-plan { color: #9ca3af; font-weight: 400; }
+#codex-quota .qlbl, #codex-quota .qname { color: #6ee7b7; }
+.qnote { color: #9ca3af; font-size: 10px; }
 
 /* ---- Throughput chart ---- */
 #chart-wrap {
