@@ -356,3 +356,27 @@ body.unlocked { border: 1px dashed rgba(196, 181, 253, 0.75); }
 #chart .line  { fill: none; stroke: #60a5fa; stroke-width: 1; vector-effect: non-scaling-stroke; }
 #chart .axis  { stroke: rgba(255,255,255,0.05); stroke-width: 1; vector-effect: non-scaling-stroke; }
 #chart .now   { stroke: #34d399; stroke-width: 1; vector-effect: non-scaling-stroke; stroke-dasharray: 2 2; opacity: 0.6; }
+
+/* ---- MultiBrow display mode (menu "Anzeige") ----
+   name | Zange (spans rows) | label | used % · elapsed % | reset in words */
+.quota .qacc.mb { grid-template-columns: 42px 15px 22px auto 1fr; row-gap: 3px; }
+.quota .qacc.mb .mbzcell { grid-column: 2; align-self: center; color: #e5e7eb; display: flex; }
+.quota .qacc.mb .qlbl { grid-column: 3; }
+.quota .mbrow { display: contents; }
+.quota .mbval { grid-column: 4; font-size: 12.5px; white-space: nowrap; color: #aab2c0; }
+.quota .mbval b { font-weight: 600; }
+.quota .mbreset { grid-column: 5; justify-self: end; font-size: 11px; color: #9aa3b2; white-space: nowrap; }
+.quota .mbrow.green .mbval b { color: #4ade80; }
+.quota .mbrow.yellow .mbval b { color: #facc15; }
+.quota .mbrow.orange .mbval b { color: #fb923c; }
+.quota .mbrow.red .mbval b { color: #f87171; }
+.quota .mbrow.none .mbval { color: #7f8798; font-style: italic; }
+.quota .mbhint {
+  grid-column: 3 / -1;
+  font-size: 11px;
+  color: #fb923c;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.quota .qacc.mb .qnote { grid-column: 3 / -1; }

@@ -17,6 +17,9 @@ contextBridge.exposeInMainWorld('widget', {
   fetchAllQuota: () => quota.fetchAllQuota(),
   // Codex subscription limits; only normalized usage reaches the renderer.
   fetchCodexQuota: () => ipcRenderer.invoke('codex-quota'),
+  // Quota display mode ('prognose' | 'multibrow'), persisted by main.
+  getDisplayMode: () => ipcRenderer.invoke('get-display-mode'),
+  onDisplayMode: (cb) => ipcRenderer.on('display-mode', (e, mode) => cb(mode)),
   openContextMenu: () => ipcRenderer.send('context-menu'),
   // Click-through control: main ignores mouse input except while the
   // pointer is over the title bar (main polls the cursor against this

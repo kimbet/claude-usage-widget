@@ -184,6 +184,54 @@ function renderQuotaRow(label, period, now) {
     + `</div>`
 }
 
+// ---- MultiBrow display mode (math/format in mbview.js, unit-tested) ----
+let displayMode = 'prognose'
+
+// Compact "Zange": narrow lane = short window, wide lane = long window.
+// Opacities on currentColor only, so it follows the foreground colour.
+function renderZange(lanes, now) {
+  const H = 24, lanesDef = [[lanes.short, 0, 5], [lanes.long, 7, 8]]
+  let out = ''
+  for (const [entry, x, w] of lanesDef) {
+    const z = mbview.zangeLane(entry && entry.period, entry && entry.label, now)
+    const rect = (zone, extra = '') => zone && zone.h > 0
+      ? `<rect x="${x}" y="${(zone.y * H).toFixed(2)}" width="${w}" height="${(zone.h * H).toFixed(2)}"${extra}/>` : ''
+    if (z.kind === 'empty') {
+      out += `<rect x="${x + 0.25}" y="0.25" width="${w - 0.5}" height="${H - 0.5}" fill="none" stroke="currentColor" stroke-opacity="0.18" stroke-width="0.5"/>`
+    } else if (z.kind === 'outline') {
+      if (z.hollow.h > 0) out += `<rect x="${x + 0.25}" y="0.25" width="${w - 0.5}" height="${Math.max(0, z.hollow.h * H - 0.5).toFixed(2)}" fill="none" stroke="currentColor" stroke-opacity="0.45" stroke-width="0.5"/>`
+      out += rect(z.used, ` fill="currentColor" fill-opacity="${z.used.ink}"`)
+    } else {
+      out += rect(z.left, ` fill="currentColor" fill-opacity="${z.left.ink}"`)
+      if (z.overlap.ink > 0) out += rect(z.overlap, ` fill="currentColor" fill-opacity="${z.overlap.ink.toFixed(3)}"`)
+      out += rect(z.used, ` fill="currentColor" fill-opacity="${z.used.ink}"`)
+    }
+  }
+  return `<svg class="mbzange" viewBox="0 0 15 ${H}" width="15" height="${H}">${out}</svg>`
+}
+
+function renderMbRow(label, period, now) {
+  const a = mbview.analyzeWindow(period, label, now)
+  return `<div class="mbrow ${a.tint}">`
+    + `<span class="qlbl">${escape(label)}</span>`
+    + `<span class="mbval"><b>${a.usedText}</b> ${a.elapsedText}</span>`
+    + `<span class="mbreset">${a.resetText}</span></div>`
+}
+
+// entries: [{label, period, title?}]; lanes from mbview.pickLanes/pickCodexLanes.
+function renderMbBlock(name, entries, lanes, now, { missing = null, staleNote = '', extra = '' } = {}) {
+  const rows = entries.map(e => renderMbRow(e.title || e.label, e.period, now))
+  if (missing) rows.push(`<div class="mbrow none"><span class="qlbl">${missing}</span><span class="mbval">noch kein Wert</span><span class="mbreset"></span></div>`)
+  const ahead = entries.some(e => mbview.analyzeWindow(e.period, e.label, now).ahead)
+  if (ahead) rows.push(`<div class="mbhint">Verbrauch läuft der Uhr voraus</div>`)
+  rows.push(extra)
+  const n = Math.max(1, entries.length + (missing ? 1 : 0) + (ahead ? 1 : 0))
+  return `<div class="qacc mb"><span class="qname" style="grid-row:span ${n}">${escape(name)}`
+    + (staleNote ? `<small>${staleNote}</small>` : '') + `</span>`
+    + `<span class="mbzcell" style="grid-row:span ${n}">${renderZange(lanes, now)}</span>`
+    + rows.join('') + `</div>`
+}
+
 // Account block: name column spans all of the account's period rows.
 function renderBlock(name, rows, extra = '', staleNote = '') {
   const n = Math.max(1, rows.length)
@@ -211,17 +259,29 @@ function renderAccountQuota(name, q) {
     lastGood.set(name, q)
   }
   const now = Date.now()
+  const staleNote0 = stale && q.fetchedAt ? `⟳ ${fmtAgo(now - q.fetchedAt)}` : ''
+  if (displayMode === 'multibrow') {
+    const entries = [['5h', q.fiveHour], ['7d', q.sevenDay]]
+      .filter(([, p]) => p).map(([label, period]) => ({ label, period }))
+    const missing = mbview.missingKnown(entries.map(e => e.label))
+    return renderMbBlock(name, entries, mbview.pickLanes(entries), now, { missing, staleNote: staleNote0 })
+  }
   const rows = [renderQuotaRow('5h', q.fiveHour, now), renderQuotaRow('7d', q.sevenDay, now)].filter(Boolean)
   const staleNote = stale && q.fetchedAt ? `⟳ ${fmtAgo(now - q.fetchedAt)}` : ''
   return renderBlock(name, rows, '', staleNote)
 }
 
+let lastAll = null
 async function refreshQuota() {
   let all
   try { all = await window.widget.fetchAllQuota() } catch (e) {
     $quota.innerHTML = `<div class="err">quota: ${escape(e.message)}</div>`
     return
   }
+  lastAll = all
+  renderAllQuota(all)
+}
+function renderAllQuota(all) {
   if (!all.accounts || !all.accounts.length) {
     $quota.innerHTML = `<div class="empty">no accounts</div>`
     return
@@ -250,6 +310,7 @@ async function refreshCodexQuota() {
       // After logout or an incompatible account, never retain another account's limits.
       if (['auth', 'unavailable', 'missing_cli'].includes(q.error)) codexLastGood = null
       if (!codexLastGood) {
+        codexView = null
         $codexPlan.textContent = ''
         $codexQuota.innerHTML = `<div class="err">${escape(problem || 'Keine Daten')}</div>`
         return
@@ -258,19 +319,48 @@ async function refreshCodexQuota() {
     } else {
       codexLastGood = q
     }
+    codexView = { q, problem }
+    renderCodex(q, problem)
+  } finally {
+    codexBusy = false
+    fitHeight()
+  }
+}
+let codexView = null
+function renderCodex(q, problem) {
     $codexPlan.textContent = q.plan ? `· ${q.plan}` : ''
     const now = Date.now()
     const staleNote = problem ? `⟳ ${fmtAgo(now - q.fetchedAt)}` : ''
+    if (displayMode === 'multibrow') { $codexQuota.innerHTML = renderCodexMb(q, now, staleNote); return }
     $codexQuota.innerHTML = q.limits.map((limit, i) => renderBlock(
       q.limits.length > 1 || limit.id !== 'codex' ? limit.name : 'Codex',
       limit.periods.map(period => renderQuotaRow(period.label, period, now)),
       limit.unlimited && !limit.periods.length ? '<div class="qnote">Unbegrenztes Kontingent</div>' : '',
       i === 0 ? staleNote : '',
     )).join('')
-  } finally {
-    codexBusy = false
-    fitHeight()
+}
+function renderCodexMb(q, now, staleNote) {
+  const multi = q.limits.length > 1
+  const entries = []
+  for (const limit of q.limits) for (const p of limit.periods) {
+    entries.push({ label: p.label, period: p, title: multi ? `${limit.name} ${p.label}` : p.label })
   }
+  const unlimited = q.limits.some(l => l.unlimited && !l.periods.length)
+    ? '<div class="qnote">Unbegrenztes Kontingent</div>' : ''
+  return renderMbBlock(multi ? 'Codex' : (q.limits[0]?.id !== 'codex' ? q.limits[0]?.name || 'Codex' : 'Codex'),
+    entries, mbview.pickCodexLanes(q.limits), now, { staleNote, extra: unlimited })
 }
 refreshCodexQuota()
 setInterval(refreshCodexQuota, 60_000)
+
+// Display mode: read once, then switch live on menu change (no refetch —
+// re-render the last snapshots).
+function applyDisplayMode(mode) {
+  displayMode = mode === 'multibrow' ? 'multibrow' : 'prognose'
+  document.body.classList.toggle('mode-multibrow', displayMode === 'multibrow')
+  if (lastAll) renderAllQuota(lastAll)
+  if (codexView) renderCodex(codexView.q, codexView.problem)
+  fitHeight()
+}
+window.widget.getDisplayMode?.().then(applyDisplayMode).catch(() => {})
+window.widget.onDisplayMode?.(applyDisplayMode)

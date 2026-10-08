@@ -34,6 +34,17 @@ function saveState(patch) {
 
 let win = null
 
+// Display mode of the quota rows: 'prognose' (default) or 'multibrow'.
+const DISPLAY_MODES = ['prognose', 'multibrow']
+let displayMode = DISPLAY_MODES.includes(loadState().displayMode) ? loadState().displayMode : 'prognose'
+function setDisplayMode(mode) {
+  if (!DISPLAY_MODES.includes(mode)) return
+  displayMode = mode
+  saveState({ displayMode: mode })
+  win?.webContents.send('display-mode', mode)
+}
+ipcMain.handle('get-display-mode', () => displayMode)
+
 function createWindow() {
   const state = loadState()
   const primary = screen.getPrimaryDisplay().workArea
@@ -141,6 +152,13 @@ function showContextMenu() {
     {
       label: win?.isAlwaysOnTop() ? '✓ Always on top' : 'Always on top',
       click: () => win?.setAlwaysOnTop(!win.isAlwaysOnTop(), 'screen-saver'),
+    },
+    {
+      label: 'Anzeige',
+      submenu: [
+        { label: 'Prognose', type: 'radio', checked: displayMode === 'prognose', click: () => setDisplayMode('prognose') },
+        { label: 'MultiBrow', type: 'radio', checked: displayMode === 'multibrow', click: () => setDisplayMode('multibrow') },
+      ],
     },
     { label: 'Reload',  click: () => win?.reload() },
     { label: 'DevTools', click: () => win?.webContents.openDevTools({ mode: 'detach' }) },
