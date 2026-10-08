@@ -1,7 +1,7 @@
 // Renderer. Polls window.widget independently for Claude today totals
 // (30 s), throughput chart (30 s), and Claude/Codex subscription quotas (60 s),
 // and renders DOM from the returned snapshots. Stays dumb on purpose:
-// no framework, no animation logic beyond CSS. The cadences are slow
+// no framework. The cadences are slow
 // because the underlying numbers move slowly and every totals/series
 // poll costs (cached, incremental) disk reads in the preload.
 
@@ -22,20 +22,96 @@ let overHeader = false
 window.widget.onHeaderHot(on => {
   overHeader = on
   $drag.classList.toggle('hot', on)
-  if (on) document.body.classList.remove('peek')
+  if (on) stopPeek()
 })
 
 // See-through spotlight: around the pointer the panel fades out, so the
 // click target underneath is visible. Off over the title bar (that one
 // takes the click) and while unlocked for resizing.
 const rootStyle = document.documentElement.style
+const $trail = document.getElementById('trail-strokes')
+const $trailHeader = document.getElementById('trail-header')
+const TRAIL_HOLD_MS = 900
+const TRAIL_FADE_MS = 2300
+const TRAIL_SAMPLE_MS = 40
+const TRAIL_WIDTH = 60
+const trail = []
+let trailFrame = 0
+let lastTrailFrame = 0
+let lastPointer = null
+let unlocked = false
+
+function addTrailPoint(x, y, now) {
+  if (lastPointer && now - lastPointer.at < TRAIL_SAMPLE_MS) return
+  const from = lastPointer || { x, y }
+  const stroke = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  // Keep a tiny span so an isolated point renders as a round stroke too.
+  stroke.setAttribute('d', `M ${from.x} ${from.y} L ${x + 0.01} ${y + 0.01}`)
+  stroke.setAttribute('stroke-width', TRAIL_WIDTH)
+  $trail.appendChild(stroke)
+  trail.push({ stroke, at: now })
+  // Bound memory even if the browser delays animation frames.
+  if (trail.length > 96) trail.shift().stroke.remove()
+  lastPointer = { x, y, at: now }
+  $trailHeader.setAttribute('height', $drag.getBoundingClientRect().bottom)
+  if (!trailFrame) trailFrame = requestAnimationFrame(fadeTrail)
+}
+
+function fadeTrail(now) {
+  trailFrame = 0
+  // The trail needs only 30 fps, including on high refresh rate displays.
+  if (now - lastTrailFrame >= 1000 / 30) {
+    lastTrailFrame = now
+    for (let i = trail.length - 1; i >= 0; i--) {
+      const point = trail[i]
+      const age = now - point.at - TRAIL_HOLD_MS
+      if (age >= TRAIL_FADE_MS) {
+        point.stroke.remove()
+        trail.splice(i, 1)
+        continue
+      }
+      const t = Math.max(0, age / TRAIL_FADE_MS)
+      const remaining = 1 - t * t * (3 - 2 * t)
+      point.stroke.setAttribute('opacity', remaining)
+      point.stroke.setAttribute('stroke-width', TRAIL_WIDTH * remaining)
+    }
+  }
+  if (trail.length) trailFrame = requestAnimationFrame(fadeTrail)
+}
+
+function stopPeek() {
+  document.body.classList.remove('peek')
+  lastPointer = null
+}
+
+function clearTrail() {
+  stopPeek()
+  cancelAnimationFrame(trailFrame)
+  trailFrame = 0
+  trail.length = 0
+  $trail.replaceChildren()
+}
+
 document.addEventListener('mousemove', e => {
+  if (unlocked || overHeader || e.target.closest('#drag')) {
+    stopPeek()
+    return
+  }
   rootStyle.setProperty('--mx', e.clientX + 'px')
   rootStyle.setProperty('--my', e.clientY + 'px')
-  document.body.classList.toggle('peek', !overHeader && !e.target.closest('#drag'))
+  document.body.classList.add('peek')
+  addTrailPoint(e.clientX, e.clientY, performance.now())
 })
-document.addEventListener('mouseleave', () => document.body.classList.remove('peek'))
-window.widget.onUnlocked(on => document.body.classList.toggle('unlocked', on))
+document.addEventListener('mouseleave', stopPeek)
+window.widget.onUnlocked(on => {
+  unlocked = on
+  document.body.classList.toggle('unlocked', on)
+  if (on) clearTrail()
+  else { lastFitH = 0; fitHeight() }
+})
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) clearTrail()
+})
 
 // Format integers as "1.2k", "12.4k", "1.2M".
 function fmtTokens(n) {
@@ -77,6 +153,7 @@ let lastFitH = 0
 function fitHeight() {
   requestAnimationFrame(() => {
     const h = document.body.offsetHeight
+    if (unlocked) return
     if (h && Math.abs(h - lastFitH) > 2) {
       lastFitH = h
       window.widget.resizeContent(h)
@@ -207,7 +284,7 @@ function renderZange(lanes, now) {
       out += rect(z.used, ` fill="currentColor" fill-opacity="${z.used.ink}"`)
     }
   }
-  return `<svg class="mbzange" viewBox="0 0 15 ${H}" width="15" height="${H}">${out}</svg>`
+  return `<svg class="mbzange" viewBox="0 0 15 ${H}" width="60" height="${H}" preserveAspectRatio="none">${out}</svg>`
 }
 
 function renderMbRow(label, period, now) {
@@ -364,3 +441,19 @@ function applyDisplayMode(mode) {
 }
 window.widget.getDisplayMode?.().then(applyDisplayMode).catch(() => {})
 window.widget.onDisplayMode?.(applyDisplayMode)
+
+// Resize grip (bottom-right, visible while unlocked): transparent frameless
+// windows can't be resized by the OS border, so drag it by hand.
+const $grip = document.getElementById('grip')
+$grip.addEventListener('pointerdown', e => {
+  $grip.setPointerCapture(e.pointerId)
+  const sx = e.screenX, sy = e.screenY, w0 = window.outerWidth, h0 = window.outerHeight
+  const move = ev => window.widget.resizeTo(w0 + ev.screenX - sx, h0 + ev.screenY - sy)
+  const up = () => {
+    $grip.removeEventListener('pointermove', move)
+    $grip.removeEventListener('pointerup', up)
+    window.widget.resizeDone()
+  }
+  $grip.addEventListener('pointermove', move)
+  $grip.addEventListener('pointerup', up)
+})

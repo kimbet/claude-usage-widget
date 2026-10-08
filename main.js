@@ -179,6 +179,16 @@ ipcMain.handle('codex-quota', () => codexQuota.fetchCodexQuota())
 // Fit window height to rendered content. Width and position stay as the
 // user placed them; only the height tracks the content so the panel has
 // no dead space below the quota (the tall session list is gone).
+ipcMain.on('resize-to', (e, w, h) => {
+  if (!win || win.isDestroyed() || !unlocked) return
+  win.setSize(Math.max(280, Math.round(w)), Math.max(120, Math.round(h)))
+})
+ipcMain.on('resize-done', () => {
+  if (!win || win.isDestroyed()) return
+  const [w, h] = win.getSize()
+  const [px, py] = win.getPosition()
+  saveState({ width: w, height: h, x: px, y: py })
+})
 ipcMain.on('resize-content', (e, h) => {
   if (!win || win.isDestroyed()) return
   const [w, curH] = win.getSize()

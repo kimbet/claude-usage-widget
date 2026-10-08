@@ -28,5 +28,7 @@ contextBridge.exposeInMainWorld('widget', {
   onHeaderHot: (cb) => ipcRenderer.on('header-hot', (e, on) => cb(on)),
   onUnlocked: (cb) => ipcRenderer.on('unlocked', (e, on) => cb(on)),
   // Fit the window height to the rendered content.
+  resizeTo: (w, h) => ipcRenderer.send('resize-to', w, h),
+  resizeDone: () => ipcRenderer.send('resize-done'),
   resizeContent: (h) => ipcRenderer.send('resize-content', h),
 })

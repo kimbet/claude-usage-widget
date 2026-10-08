@@ -6,6 +6,21 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <svg class="peek-defs" aria-hidden="true">
+    <defs>
+      <filter id="trail-soften" filterUnits="userSpaceOnUse" x="-100" y="-100" width="200%" height="200%">
+        <feGaussianBlur stdDeviation="8" />
+      </filter>
+      <mask id="trail-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="100%" height="100%" style="mask-type: luminance">
+        <rect width="100%" height="100%" fill="white" />
+        <!-- Group opacity caps the cutout even where strokes overlap. -->
+        <g opacity="0.42">
+          <g id="trail-strokes" fill="none" stroke="black" stroke-linecap="round" filter="url(#trail-soften)"></g>
+        </g>
+        <rect id="trail-header" width="100%" fill="white" />
+      </mask>
+    </defs>
+  </svg>
   <!-- Click-through widget (main.js): only the ⋯ button takes clicks.
        The header becomes a drag handle only while unlocked via the menu.
        No title= tooltips — hover never reaches them. -->
@@ -36,6 +51,7 @@
 
   <script src="pace.js"></script>
   <script src="mbview.js"></script>
-  <script src="renderer.js"></script>
+  <div id="grip"></div>
+<script src="renderer.js"></script>
 </body>
 </html>
