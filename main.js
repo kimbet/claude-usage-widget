@@ -110,6 +110,7 @@ function createWindow() {
 // events: while the window ignores the mouse, Windows delivers nothing for
 // the drag region to the page, so the page could never switch it on.
 let overHeader = false
+let pointerOutside = true
 let headerH = 32      // renderer reports the real height on load
 let unlocked = false
 let headerPoll = null
@@ -125,6 +126,13 @@ function pollHeader() {
   if (!win || win.isDestroyed() || !win.isVisible()) return
   const p = screen.getCursorScreenPoint()
   const b = win.getBounds()
+  // Pointer fully outside the window: a fast exit never delivers mouseleave
+  // while the window ignores the mouse, so the see-through hole would stay.
+  const outside = p.x < b.x || p.x >= b.x + b.width || p.y < b.y || p.y >= b.y + b.height
+  if (outside !== pointerOutside) {
+    pointerOutside = outside
+    if (outside) win.webContents.send('pointer-out')
+  }
   const inside = p.x >= b.x && p.x < b.x + b.width && p.y >= b.y && p.y < b.y + headerH
   if (inside === overHeader) return
   overHeader = inside
@@ -174,6 +182,20 @@ function showContextMenu() {
   })
 }
 ipcMain.on('context-menu', showContextMenu)
+
+// Drag by the ⋯ button: renderer reports pointer deltas, main moves the window.
+let dragOrigin = null
+ipcMain.on('drag-start', () => { if (win && !win.isDestroyed()) dragOrigin = win.getPosition() })
+ipcMain.on('drag-move', (e, dx, dy) => {
+  if (!dragOrigin || !win || win.isDestroyed()) return
+  win.setPosition(Math.round(dragOrigin[0] + dx), Math.round(dragOrigin[1] + dy))
+})
+ipcMain.on('drag-end', () => {
+  dragOrigin = null
+  if (!win || win.isDestroyed()) return
+  const [px, py] = win.getPosition()
+  saveState({ x: px, y: py })
+})
 ipcMain.handle('codex-quota', () => codexQuota.fetchCodexQuota())
 
 // Fit window height to rendered content. Width and position stay as the
@@ -196,6 +218,15 @@ ipcMain.on('resize-content', (e, h) => {
   if (Math.abs(curH - target) > 1) win.setSize(w, target)
 })
 
-app.whenReady().then(createWindow)
+// Autostart at login (dev run: electron.exe + app path; packaged: the exe itself).
+function enableAutostart() {
+  try {
+    app.setLoginItemSettings(app.isPackaged
+      ? { openAtLogin: true }
+      : { openAtLogin: true, path: process.execPath, args: [app.getAppPath()] })
+  } catch { /* ignore */ }
+}
+
+app.whenReady().then(() => { createWindow(); enableAutostart() })
 app.on('before-quit', () => { clearInterval(headerPoll); codexQuota.dispose() })
 app.on('window-all-closed', () => app.quit())

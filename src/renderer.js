@@ -9,8 +9,30 @@ const $totals   = document.getElementById('totals')
 const $scanned  = document.getElementById('scanned')
 
 const $menu = document.getElementById('menu')
-$menu.addEventListener('click', () => {
-  window.widget.openContextMenu()
+// ⋯ is both: click opens the menu, press-and-move drags the window.
+$menu.addEventListener('pointerdown', e => {
+  $menu.setPointerCapture(e.pointerId)
+  const sx = e.screenX, sy = e.screenY
+  let dragging = false
+  const move = ev => {
+    const dx = ev.screenX - sx, dy = ev.screenY - sy
+    if (!dragging) {
+      if (Math.hypot(dx, dy) < 4) return
+      dragging = true
+      window.widget.dragStart()
+    }
+    window.widget.dragMove(dx, dy)
+  }
+  const up = () => {
+    $menu.removeEventListener('pointermove', move)
+    $menu.removeEventListener('pointerup', up)
+    $menu.removeEventListener('pointercancel', up)
+    if (dragging) window.widget.dragEnd()
+    else window.widget.openContextMenu()
+  }
+  $menu.addEventListener('pointermove', move)
+  $menu.addEventListener('pointerup', up)
+  $menu.addEventListener('pointercancel', up)
 })
 
 // Click-through: main decides when the title bar takes the mouse (it
@@ -103,6 +125,7 @@ document.addEventListener('mousemove', e => {
   addTrailPoint(e.clientX, e.clientY, performance.now())
 })
 document.addEventListener('mouseleave', stopPeek)
+window.widget.onPointerOut(stopPeek)
 window.widget.onUnlocked(on => {
   unlocked = on
   document.body.classList.toggle('unlocked', on)

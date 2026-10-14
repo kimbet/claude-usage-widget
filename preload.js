@@ -26,6 +26,10 @@ contextBridge.exposeInMainWorld('widget', {
   // height) or the widget is unlocked for resizing.
   headerHeight: (h) => ipcRenderer.send('header-height', h),
   onHeaderHot: (cb) => ipcRenderer.on('header-hot', (e, on) => cb(on)),
+  dragStart: () => ipcRenderer.send('drag-start'),
+  dragMove: (dx, dy) => ipcRenderer.send('drag-move', dx, dy),
+  dragEnd: () => ipcRenderer.send('drag-end'),
+  onPointerOut: (cb) => ipcRenderer.on('pointer-out', () => cb()),
   onUnlocked: (cb) => ipcRenderer.on('unlocked', (e, on) => cb(on)),
   // Fit the window height to the rendered content.
   resizeTo: (w, h) => ipcRenderer.send('resize-to', w, h),
