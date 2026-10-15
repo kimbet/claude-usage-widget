@@ -114,8 +114,20 @@ function clearTrail() {
   $trail.replaceChildren()
 }
 
+// Ctrl+Shift held: panel stays opaque (no spotlight, no trail). Mouse events
+// carry the modifier state even while the window is unfocused/click-through,
+// so mousemove is the reliable source; key events cover a focused window.
+let solidKeys = false
+function setSolid(on) {
+  if (on === solidKeys) return
+  solidKeys = on
+  if (on) clearTrail()
+}
+// Authoritative source: main polls the global key state (GetAsyncKeyState).
+window.widget.onSolidKeys(setSolid)
+
 document.addEventListener('mousemove', e => {
-  if (unlocked || overHeader || e.target.closest('#drag')) {
+  if (solidKeys || unlocked || overHeader || e.target.closest('#drag')) {
     stopPeek()
     return
   }

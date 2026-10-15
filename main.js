@@ -150,6 +150,32 @@ function setUnlocked(on) {
   win?.webContents.send('unlocked', on)
 }
 
+// Ctrl+Shift held -> renderer drops the see-through spotlight. The window is
+// never focused and ignores the mouse, so neither key nor mouse events carry
+// the state; a hidden PowerShell child polls GetAsyncKeyState and prints
+// "1"/"0" on change. Only our own child is ever killed.
+let keyProbe = null
+function startKeyProbe() {
+  if (process.platform !== 'win32') return
+  const script = `
+Add-Type -Name K -Namespace W -MemberDefinition '[DllImport("user32.dll")] public static extern short GetAsyncKeyState(int k);'
+$p = $false
+while ($true) {
+  $d = ([W.K]::GetAsyncKeyState(0x11) -band 0x8000) -ne 0 -and ([W.K]::GetAsyncKeyState(0x10) -band 0x8000) -ne 0
+  if ($d -ne $p) { $p = $d; [Console]::Out.WriteLine([int]$d); [Console]::Out.Flush() }
+  Start-Sleep -Milliseconds 40
+}`
+  const enc = Buffer.from(script, 'utf16le').toString('base64')
+  keyProbe = require('node:child_process').spawn('powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-EncodedCommand', enc],
+    { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] })
+  keyProbe.stdout.on('data', d => {
+    const on = String(d).trim().endsWith('1')
+    win?.webContents.send('solid-keys', on)
+  })
+  keyProbe.on('exit', () => { keyProbe = null })
+}
+
 // ⋯ menu — move/resize toggle, always-on-top, reload, quit
 function showContextMenu() {
   const menu = Menu.buildFromTemplate([
@@ -227,6 +253,6 @@ function enableAutostart() {
   } catch { /* ignore */ }
 }
 
-app.whenReady().then(() => { createWindow(); enableAutostart() })
-app.on('before-quit', () => { clearInterval(headerPoll); codexQuota.dispose() })
+app.whenReady().then(() => { createWindow(); startKeyProbe(); enableAutostart() })
+app.on('before-quit', () => { clearInterval(headerPoll); keyProbe?.kill(); codexQuota.dispose() })
 app.on('window-all-closed', () => app.quit())

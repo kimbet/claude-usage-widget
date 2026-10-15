@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('widget', {
   dragMove: (dx, dy) => ipcRenderer.send('drag-move', dx, dy),
   dragEnd: () => ipcRenderer.send('drag-end'),
   onPointerOut: (cb) => ipcRenderer.on('pointer-out', () => cb()),
+  onSolidKeys: (cb) => ipcRenderer.on('solid-keys', (e, on) => cb(on)),
   onUnlocked: (cb) => ipcRenderer.on('unlocked', (e, on) => cb(on)),
   // Fit the window height to the rendered content.
   resizeTo: (w, h) => ipcRenderer.send('resize-to', w, h),
